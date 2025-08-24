@@ -16,7 +16,8 @@
       "Bash(pkill:*)",
       "Bash(killall:*)",
       "Bash(npm ls:*)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(psql:*)"
     ],
     "deny": [],
     "ask": [],

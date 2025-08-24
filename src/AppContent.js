@@ -5,8 +5,22 @@ import {
   Plus, Edit, Trash2, Eye, ChevronLeft, ChevronRight,
   TrendingDown, Activity, Award, AlertCircle, Upload, FileText,
   Brain, Zap, CheckCircle, Star, Flag, Users, Settings, LineChart,
-  Newspaper, User, LogOut
+  Newspaper, User, LogOut, Home, UserCircle
 } from 'lucide-react';
+
+// Import new components
+import Dashboard from './components/Dashboard';
+import Analytics from './components/Analytics';
+import Profile from './components/Profile';
+import { 
+  migrateLocalTradesToDatabase, 
+  loadTradesFromDatabase,
+  addTradeToDatabase,
+  updateTradeInDatabase,
+  deleteTradeFromDatabase,
+  checkExistingTrades,
+  deleteAllUserTrades
+} from './utils/migrateTrades';
 
 // TradingView News Widget
 const TradingViewNewsWidget = memo(() => {
@@ -146,15 +160,17 @@ const TradingViewWidget = memo(() => {
 });
 
 const TradingJournal = ({ session, supabase }) => {
-  const [activeTab, setActiveTab] = useState('risk-calculator');
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
   
+  /* DISABLED AI ANALYSIS
   // AI Analysis State
   const [claudeAnalysis, setClaudeAnalysis] = useState('');
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [anthropicApiKey, setAnthropicApiKey] = useState('');
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  */
   
   // Trading Goals State
   const [tradingGoals, setTradingGoals] = useState([
@@ -246,6 +262,7 @@ const TradingJournal = ({ session, supabase }) => {
     }
   ]);
 
+  const [userProfile, setUserProfile] = useState(null);
   const [newTrade, setNewTrade] = useState({
     date: new Date().toISOString().split('T')[0],
     pair: 'EURUSD',
@@ -278,6 +295,15 @@ const TradingJournal = ({ session, supabase }) => {
   const [dateTo, setDateTo] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [dragOver, setDragOver] = useState(false);
+  
+  // Migration states
+  const [showMigrationModal, setShowMigrationModal] = useState(false);
+  const [migrationStatus, setMigrationStatus] = useState('idle'); // 'idle', 'migrating', 'success', 'error'
+  const [migrationMessage, setMigrationMessage] = useState('');
+  const [quickMigrating, setQuickMigrating] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [showCleanupModal, setShowCleanupModal] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
 
   const majorPairs = [
     'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD',
@@ -289,16 +315,21 @@ const TradingJournal = ({ session, supabase }) => {
     'News Trading', 'Scalping', 'Swing Trading', 'Other'
   ];
 
-  // Risk Calculator Functions
+  // Enhanced Risk Calculator Functions with Warnings
   const calculateRisk = () => {
     const { accountBalance, riskPercent, entryPrice, stopLoss, takeProfit } = riskInputs;
+    
+    if (!entryPrice || !stopLoss || !takeProfit || !accountBalance) {
+      setRiskResults({});
+      return;
+    }
     
     const pipDifference = Math.abs(entryPrice - stopLoss);
     const rewardPipDifference = Math.abs(takeProfit - entryPrice);
     
     const isJpyPair = riskInputs.currencyPair.includes('JPY');
     const isGoldPair = riskInputs.currencyPair === 'XAUUSD';
-    const isBtcPair = riskInputs.currencyPair === 'BTCUSD';
+    const isBtcPair = riskInputs.currencyPair === 'BTCUSD' || riskInputs.currencyPair === 'BTCUSDT';
     
     let pipSize;
     if (isJpyPair) {
@@ -306,7 +337,7 @@ const TradingJournal = ({ session, supabase }) => {
     } else if (isGoldPair) {
       pipSize = 0.1;
     } else if (isBtcPair) {
-      pipSize = 1;
+      pipSize = 100;
     } else {
       pipSize = 0.0001;
     }
@@ -314,37 +345,110 @@ const TradingJournal = ({ session, supabase }) => {
     const pipsAtRisk = pipDifference / pipSize;
     const rewardPips = rewardPipDifference / pipSize;
     const riskAmount = (accountBalance * riskPercent) / 100;
-    const pipValue = riskAmount / pipsAtRisk;
+    const pipValue = pipsAtRisk > 0 ? riskAmount / pipsAtRisk : 0;
     
-    let lotSize;
-    let positionSizeStandardLots;
+    let lotSize = 0;
+    let positionSizeStandardLots = 0;
     
-    if (isGoldPair) {
-      lotSize = (riskAmount / pipsAtRisk) / 10;
-      positionSizeStandardLots = lotSize;
-    } else if (isBtcPair) {
-      lotSize = riskAmount / pipsAtRisk;
-      positionSizeStandardLots = lotSize;
-    } else {
-      const standardLotSize = 100000;
-      lotSize = (pipValue * standardLotSize) / (isJpyPair ? 100 : 1);
-      positionSizeStandardLots = lotSize / standardLotSize;
+    if (pipsAtRisk > 0) {
+      if (isGoldPair) {
+        lotSize = (riskAmount / pipsAtRisk) / 10;
+        positionSizeStandardLots = lotSize;
+      } else if (isBtcPair) {
+        lotSize = riskAmount / pipsAtRisk;
+        positionSizeStandardLots = lotSize;
+      } else {
+        const standardLotSize = 100000;
+        lotSize = (pipValue * standardLotSize) / (isJpyPair ? 100 : 10);
+        positionSizeStandardLots = lotSize / standardLotSize;
+      }
     }
     
-    const rrRatio = rewardPips / pipsAtRisk;
+    const rrRatio = pipsAtRisk > 0 ? rewardPips / pipsAtRisk : 0;
     const potentialProfit = riskAmount * rrRatio;
+    const breakEvenWinRate = rrRatio > 0 ? (1 / (1 + rrRatio)) * 100 : 100;
+    
+    // Risk Analysis and Warnings
+    const warnings = [];
+    const riskLevel = riskPercent > 5 ? 'HIGH' : riskPercent > 2 ? 'MEDIUM' : 'LOW';
+    
+    // Check if trade setup is inverted (immediate loss scenario)
+    const tradeDirection = entryPrice < takeProfit ? 'BUY' : 'SELL';
+    const isImmediateLoss = (tradeDirection === 'BUY' && stopLoss > entryPrice) || 
+                           (tradeDirection === 'SELL' && stopLoss < entryPrice);
+    
+    if (isImmediateLoss) {
+      warnings.push({
+        type: 'CRITICAL',
+        message: '⚠️ CRITICAL: Trade will enter immediate loss! Check stop loss placement.'
+      });
+    }
+    
+    if (rrRatio < 1) {
+      warnings.push({
+        type: 'WARNING',
+        message: `⚠️ Poor risk/reward ratio (1:${rrRatio.toFixed(2)}). Target should be further from entry.`
+      });
+    }
+    
+    if (riskPercent > 5) {
+      warnings.push({
+        type: 'CRITICAL',
+        message: '🚨 Risk per trade exceeds 5%! Extremely dangerous - reduce immediately.'
+      });
+    } else if (riskPercent > 3) {
+      warnings.push({
+        type: 'WARNING', 
+        message: '⚠️ High risk per trade (>3%). Consider reducing position size.'
+      });
+    }
+    
+    if (breakEvenWinRate > 70) {
+      warnings.push({
+        type: 'INFO',
+        message: `📊 High accuracy needed: ${breakEvenWinRate.toFixed(1)}% win rate required to break even.`
+      });
+    }
+    
+    // Asset-specific warnings
+    if (isBtcPair) {
+      if (Math.abs(entryPrice - stopLoss) < 500) {
+        warnings.push({
+          type: 'INFO',
+          message: '₿ Bitcoin stop loss seems very tight (<$500). Consider volatility.'
+        });
+      }
+      if (Math.abs(entryPrice - stopLoss) > 5000) {
+        warnings.push({
+          type: 'INFO',
+          message: '₿ Bitcoin stop loss is wide (>$5000). High risk per pip.'
+        });
+      }
+    }
+    
+    if (isGoldPair) {
+      if (Math.abs(entryPrice - stopLoss) < 5) {
+        warnings.push({
+          type: 'INFO',
+          message: '🏅 Gold stop loss is tight (<$5). Consider volatility and spreads.'
+        });
+      }
+    }
     
     setRiskResults({
-      riskAmount: riskAmount.toFixed(2),
-      pipsAtRisk: pipsAtRisk.toFixed(1),
-      rewardPips: rewardPips.toFixed(1),
-      rrRatio: rrRatio.toFixed(2),
-      lotSize: isGoldPair || isBtcPair ? lotSize.toFixed(4) : lotSize.toFixed(0),
-      positionSizeStandardLots: positionSizeStandardLots.toFixed(4),
-      pipValue: pipValue.toFixed(2),
-      potentialProfit: potentialProfit.toFixed(2),
-      breakEvenWinRate: ((1 / (1 + rrRatio)) * 100).toFixed(1),
-      instrumentType: isGoldPair ? 'oz' : isBtcPair ? 'BTC' : 'units'
+      riskAmount: parseFloat(riskAmount.toFixed(2)),
+      pipsAtRisk: parseFloat(pipsAtRisk.toFixed(1)),
+      rewardPips: parseFloat(rewardPips.toFixed(1)),
+      rrRatio: parseFloat(rrRatio.toFixed(2)),
+      lotSize: isGoldPair || isBtcPair ? parseFloat(lotSize.toFixed(4)) : Math.round(lotSize),
+      positionSizeStandardLots: parseFloat(positionSizeStandardLots.toFixed(4)),
+      pipValue: parseFloat(pipValue.toFixed(2)),
+      potentialProfit: parseFloat(potentialProfit.toFixed(2)),
+      breakEvenWinRate: parseFloat(breakEvenWinRate.toFixed(1)),
+      instrumentType: isGoldPair ? 'oz' : isBtcPair ? 'BTC' : 'units',
+      riskLevel,
+      warnings,
+      isValidTrade: !isImmediateLoss && lotSize > 0 && !isNaN(rrRatio)
     });
   };
 
@@ -412,12 +516,30 @@ const TradingJournal = ({ session, supabase }) => {
         const columns = line.split(';').map(col => col.trim());
         
         if (columns.length >= 10) {
-          // Helper function to parse European number format
+          // Helper function to parse European number format (comprehensive)
           const parseEuropeanNumber = (numStr) => {
             if (!numStr || numStr === '') return 0;
-            const cleaned = numStr.replace(/\s/g, '').replace(',', '.');
-            const withMinus = cleaned.replace(/^-\s*/, '-');
-            return parseFloat(withMinus) || 0;
+            const str = String(numStr).replace(/\s/g, '');
+            
+            // If it contains both comma and dot, determine which is decimal separator
+            if (str.includes(',') && str.includes('.')) {
+              // European format: 1.234,56 (dot as thousands, comma as decimal)
+              if (str.lastIndexOf(',') > str.lastIndexOf('.')) {
+                return parseFloat(str.replace(/\./g, '').replace(',', '.')) || 0;
+              }
+              // US format: 1,234.56 (comma as thousands, dot as decimal)
+              else {
+                return parseFloat(str.replace(/,/g, '')) || 0;
+              }
+            }
+            // Only comma - likely European decimal separator
+            else if (str.includes(',') && !str.includes('.')) {
+              return parseFloat(str.replace(',', '.')) || 0;
+            }
+            // Only dot or no separators - standard parsing
+            else {
+              return parseFloat(str) || 0;
+            }
           };
           
           // Helper function to parse date
@@ -439,6 +561,7 @@ const TradingJournal = ({ session, supabase }) => {
             takeProfit: parseEuropeanNumber(columns[7]), // T/P
             lotSize: parseEuropeanNumber(columns[4]), // Volume
             pnl: parseEuropeanNumber(columns[12]), // Profit
+            rawPnl: columns[12], // Keep raw value for debugging
             commission: parseEuropeanNumber(columns[10]) || 0, // Commission
             swap: parseEuropeanNumber(columns[11]) || 0, // Swap
             position: columns[1] || '', // Position ID
@@ -448,8 +571,12 @@ const TradingJournal = ({ session, supabase }) => {
             setup: 'Imported Trade'
           };
           
-          // Calculate net P&L including commission and swap
+          // For imported trades, the PnL is already calculated by the broker
+          // Don't apply our asset-specific calculations during import
           trade.netPnL = trade.pnl + trade.commission + trade.swap;
+          
+          // Mark as imported to avoid double-calculation
+          trade.isImported = true;
           
           // Determine status
           trade.status = trade.exit && trade.exit > 0 ? 'closed' : 'open';
@@ -825,16 +952,68 @@ const TradingJournal = ({ session, supabase }) => {
     setSelectedImports(parsedTrades.map((_, index) => index));
   };
 
-  const importSelectedTrades = () => {
-    if (!importResults || selectedImports.length === 0) return;
+  const importSelectedTrades = async () => {
+    if (!importResults || selectedImports.length === 0) {
+      console.log('No import results or selected imports');
+      return;
+    }
     
+    setImporting(true);
+    console.log('Starting import of', selectedImports.length, 'trades');
     const tradesToImport = selectedImports.map(index => importResults.trades[index]);
-    setTrades(prev => [...prev, ...tradesToImport]);
     
+    // Process trades for database format
+    const processedTrades = tradesToImport.map(trade => ({
+      ...trade,
+      id: trade.id || Date.now() + Math.random(),
+      pnl: trade.pnl || 0,
+      status: trade.status || (trade.exit ? 'closed' : 'open'),
+      rr: trade.rr || (trade.takeProfit && trade.stopLoss && trade.entry ? 
+        Math.abs((parseFloat(trade.takeProfit) - parseFloat(trade.entry)) / 
+                (parseFloat(trade.entry) - parseFloat(trade.stopLoss))) : null),
+      isImported: true // Preserve import flag for proper database handling
+    }));
+
+    // Use batch migration for better performance (skip duplicate check for imports)
+    const result = await migrateLocalTradesToDatabase(processedTrades, session.user.id, true);
+    
+    let savedTrades = [];
+    if (result.success) {
+      console.log('Successfully batch imported', result.count, 'trades');
+      // Load the newly imported trades from database
+      const loadResult = await loadTradesFromDatabase(session.user.id);
+      if (loadResult.success) {
+        // Get only the newly imported trades (they'll be at the top since ordered by date desc)
+        savedTrades = loadResult.trades.slice(0, processedTrades.length);
+      } else {
+        savedTrades = processedTrades;
+      }
+    } else {
+      console.error('Batch import failed, falling back to individual saves:', result.error);
+      // Fallback to individual saves if batch fails
+      savedTrades = [];
+      for (const trade of processedTrades) {
+        const individualResult = await addTradeToDatabase(trade, session.user.id);
+        if (individualResult.success) {
+          savedTrades.push(individualResult.trade);
+        } else {
+          savedTrades.push({...trade, id: Date.now() + Math.random()});
+        }
+      }
+    }
+    
+    console.log('Adding', savedTrades.length, 'trades to local state');
+    // Add to local state
+    setTrades(prev => [...prev, ...savedTrades]);
+    
+    // Clear import state
     setImportText('');
     setImportResults(null);
     setSelectedImports([]);
     setShowImportModal(false);
+    
+    console.log('Import process completed');
+    setImporting(false);
   };
 
   const toggleTradeSelection = (index) => {
@@ -845,7 +1024,8 @@ const TradingJournal = ({ session, supabase }) => {
     );
   };
 
-  // AI Analysis Functions
+  // DISABLED AI ANALYSIS FUNCTIONS - All AI analysis code has been disabled
+  /*
   const analyzeTradesWithClaude = async (analysisType = 'performance') => {
     if (!anthropicApiKey) {
       setShowApiKeyModal(true);
@@ -936,6 +1116,8 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
       setAnalysisLoading(false);
     }
   };
+  */
+  // END DISABLED AI ANALYSIS FUNCTIONS
 
   // Trading Goals Functions
   const addGoal = () => {
@@ -1003,12 +1185,72 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
     ));
   };
 
+  // Robust decimal parsing function that handles both US and European formats
+  const parseDecimal = (value) => {
+    if (!value || value === '' || value === null || value === undefined) {
+      return 0;
+    }
+    
+    const str = String(value).trim();
+    
+    // Handle empty or non-numeric strings
+    if (str === '' || str === '-' || str === 'N/A' || str === 'null') {
+      return 0;
+    }
+    
+    // If it contains both comma and dot, determine which is decimal separator
+    if (str.includes(',') && str.includes('.')) {
+      // European format: 1.234,56 (dot as thousands, comma as decimal)
+      if (str.lastIndexOf(',') > str.lastIndexOf('.')) {
+        return parseFloat(str.replace(/\./g, '').replace(',', '.')) || 0;
+      }
+      // US format: 1,234.56 (comma as thousands, dot as decimal)
+      else {
+        return parseFloat(str.replace(/,/g, '')) || 0;
+      }
+    }
+    // Only comma - likely European decimal separator
+    else if (str.includes(',') && !str.includes('.')) {
+      return parseFloat(str.replace(',', '.')) || 0;
+    }
+    // Only dot or no separators - standard parsing
+    else {
+      return parseFloat(str) || 0;
+    }
+  };
+
+  // Asset-specific PnL calculation
+  const calculatePnL = (entry, exit, lotSize, pair, type) => {
+    if (!exit || !entry || !lotSize) return 0;
+    
+    const entryPrice = parseFloat(entry);
+    const exitPrice = parseFloat(exit);
+    const size = parseFloat(lotSize);
+    const tradeDirection = type.toUpperCase() === 'BUY' ? 1 : -1;
+    const priceDiff = (exitPrice - entryPrice) * tradeDirection;
+    
+    // Asset-specific multipliers and calculations
+    if (pair === 'BTCUSD' || pair === 'BTCUSDT') {
+      // Bitcoin: 1 lot = 1 BTC, direct USD calculation
+      return priceDiff * size;
+    } else if (pair === 'XAUUSD') {
+      // Gold: 1 lot = 100 oz, price in USD per oz
+      return priceDiff * size * 100;
+    } else if (pair.includes('JPY')) {
+      // JPY pairs: pip value calculation (0.01 pip)
+      return (priceDiff / 0.01) * size * 10;
+    } else {
+      // Standard forex pairs: pip value calculation (0.0001 pip)
+      return (priceDiff / 0.0001) * size * 1;
+    }
+  };
+
   // Trade Management Functions
-  const addTrade = () => {
+  const addTrade = async () => {
     if (!newTrade.entry || !newTrade.stopLoss || !newTrade.takeProfit || !newTrade.lotSize) return;
     
     const pnl = newTrade.exit ? 
-      (parseFloat(newTrade.exit) - parseFloat(newTrade.entry)) * parseFloat(newTrade.lotSize) * 10000 : 0;
+      calculatePnL(newTrade.entry, newTrade.exit, newTrade.lotSize, newTrade.pair, newTrade.type) : 0;
     
     const trade = {
       id: Date.now(),
@@ -1024,7 +1266,18 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
                   (parseFloat(newTrade.entry) - parseFloat(newTrade.stopLoss)))
     };
     
-    setTrades(prev => [...prev, trade]);
+    // Save to database first
+    const result = await addTradeToDatabase(trade, session.user.id);
+    
+    if (result.success) {
+      // Use the database trade with proper ID
+      setTrades(prev => [...prev, result.trade]);
+    } else {
+      // Fallback to local storage if database fails
+      console.error('Failed to save to database, using local storage:', result.error);
+      setTrades(prev => [...prev, trade]);
+    }
+    
     setNewTrade({
       date: new Date().toISOString().split('T')[0],
       pair: 'EURUSD',
@@ -1040,8 +1293,18 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
     setShowAddTrade(false);
   };
 
-  const deleteTrade = (id) => {
-    setTrades(prev => prev.filter(trade => trade.id !== id));
+  const deleteTrade = async (id) => {
+    // Delete from database first
+    const result = await deleteTradeFromDatabase(id, session.user.id);
+    
+    if (result.success) {
+      // Remove from local state
+      setTrades(prev => prev.filter(trade => trade.id !== id));
+    } else {
+      // Fallback to local deletion if database fails
+      console.error('Failed to delete from database, removing locally:', result.error);
+      setTrades(prev => prev.filter(trade => trade.id !== id));
+    }
   };
 
   const editTrade = (trade) => {
@@ -1061,11 +1324,11 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
     setShowAddTrade(true);
   };
 
-  const updateTrade = () => {
+  const updateTrade = async () => {
     if (!editingTrade) return;
     
     const pnl = newTrade.exit ? 
-      (parseFloat(newTrade.exit) - parseFloat(newTrade.entry)) * parseFloat(newTrade.lotSize) * 10000 : 0;
+      calculatePnL(newTrade.entry, newTrade.exit, newTrade.lotSize, newTrade.pair, newTrade.type) : 0;
     
     const updatedTrade = {
       ...editingTrade,
@@ -1081,9 +1344,22 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
                   (parseFloat(newTrade.entry) - parseFloat(newTrade.stopLoss)))
     };
     
-    setTrades(prev => prev.map(trade => 
-      trade.id === editingTrade.id ? updatedTrade : trade
-    ));
+    // Update in database first
+    const result = await updateTradeInDatabase(updatedTrade, session.user.id);
+    
+    if (result.success) {
+      // Update local state with database response
+      setTrades(prev => prev.map(trade => 
+        trade.id === editingTrade.id ? updatedTrade : trade
+      ));
+    } else {
+      // Fallback to local update if database fails
+      console.error('Failed to update in database, updating locally:', result.error);
+      setTrades(prev => prev.map(trade => 
+        trade.id === editingTrade.id ? updatedTrade : trade
+      ));
+    }
+    
     setEditingTrade(null);
     setNewTrade({
       date: new Date().toISOString().split('T')[0],
@@ -1122,33 +1398,228 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
     return dayTrades.reduce((total, trade) => total + trade.pnl, 0);
   };
 
-  // Statistics
+  // Enhanced Statistics with Mathematical Precision
   const calculateStats = () => {
     const closedTrades = trades.filter(t => t.status === 'closed');
     const winningTrades = closedTrades.filter(t => t.pnl > 0);
     const losingTrades = closedTrades.filter(t => t.pnl < 0);
+    const breakEvenTrades = closedTrades.filter(t => t.pnl === 0);
     
-    const totalPnL = closedTrades.reduce((sum, t) => sum + t.pnl, 0);
+    const totalPnL = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
     const winRate = closedTrades.length > 0 ? (winningTrades.length / closedTrades.length) * 100 : 0;
-    const avgWin = winningTrades.length > 0 ? winningTrades.reduce((sum, t) => sum + t.pnl, 0) / winningTrades.length : 0;
-    const avgLoss = losingTrades.length > 0 ? Math.abs(losingTrades.reduce((sum, t) => sum + t.pnl, 0) / losingTrades.length) : 0;
-    const profitFactor = avgLoss > 0 ? avgWin / avgLoss : 0;
+    
+    const grossProfit = winningTrades.reduce((sum, t) => sum + t.pnl, 0);
+    const grossLoss = Math.abs(losingTrades.reduce((sum, t) => sum + t.pnl, 0));
+    const avgWin = winningTrades.length > 0 ? grossProfit / winningTrades.length : 0;
+    const avgLoss = losingTrades.length > 0 ? grossLoss / losingTrades.length : 0;
+    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 999 : 0;
+    
+    // Drawdown calculation
+    let peak = 0;
+    let maxDrawdown = 0;
+    let runningPnL = 0;
+    
+    closedTrades.forEach(trade => {
+      runningPnL += trade.pnl || 0;
+      if (runningPnL > peak) peak = runningPnL;
+      const drawdown = peak - runningPnL;
+      if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+    });
+    
+    // Consecutive win/loss streaks
+    let currentWinStreak = 0;
+    let currentLossStreak = 0;
+    let maxWinStreak = 0;
+    let maxLossStreak = 0;
+    
+    closedTrades.forEach(trade => {
+      if (trade.pnl > 0) {
+        currentWinStreak++;
+        currentLossStreak = 0;
+        if (currentWinStreak > maxWinStreak) maxWinStreak = currentWinStreak;
+      } else if (trade.pnl < 0) {
+        currentLossStreak++;
+        currentWinStreak = 0;
+        if (currentLossStreak > maxLossStreak) maxLossStreak = currentLossStreak;
+      } else {
+        currentWinStreak = 0;
+        currentLossStreak = 0;
+      }
+    });
+    
+    // Risk-adjusted returns (simplified Sharpe ratio)
+    const avgReturn = closedTrades.length > 0 ? totalPnL / closedTrades.length : 0;
+    const returns = closedTrades.map(t => t.pnl || 0);
+    const variance = returns.length > 1 ? 
+      returns.reduce((sum, ret) => sum + Math.pow(ret - avgReturn, 2), 0) / (returns.length - 1) : 0;
+    const stdDev = Math.sqrt(variance);
+    const sharpeRatio = stdDev > 0 ? avgReturn / stdDev : 0;
+    
+    // Worth Score calculation (0-1000 scale)
+    // If no closed trades, return 0
+    const worthScore = closedTrades.length === 0 ? 0 : (() => {
+      const baseScore = Math.max(0, Math.min(winRate * 4, 400)); // Win rate component (0-400)
+      const profitScore = Math.max(0, Math.min(profitFactor * 100, 300)); // Profit factor component (0-300)
+      const consistencyScore = Math.max(0, 200 - (maxLossStreak * 20)); // Consistency component (0-200)
+      const experienceScore = Math.min(closedTrades.length * 2, 100); // Experience component (0-100)
+      return Math.round(baseScore + profitScore + consistencyScore + experienceScore);
+    })();
     
     return {
       totalTrades: closedTrades.length,
       winningTrades: winningTrades.length,
       losingTrades: losingTrades.length,
-      winRate: winRate.toFixed(1),
-      totalPnL: totalPnL.toFixed(2),
-      avgWin: avgWin.toFixed(2),
-      avgLoss: avgLoss.toFixed(2),
-      profitFactor: profitFactor.toFixed(2),
-      openTrades: trades.filter(t => t.status === 'open').length
+      breakEvenTrades: breakEvenTrades.length,
+      winRate: parseFloat(winRate.toFixed(1)),
+      totalPnL: parseFloat(totalPnL.toFixed(2)),
+      grossProfit: parseFloat(grossProfit.toFixed(2)),
+      grossLoss: parseFloat(grossLoss.toFixed(2)),
+      avgWin: parseFloat(avgWin.toFixed(2)),
+      avgLoss: parseFloat(avgLoss.toFixed(2)),
+      profitFactor: parseFloat(profitFactor.toFixed(2)),
+      maxDrawdown: parseFloat(maxDrawdown.toFixed(2)),
+      maxWinStreak,
+      maxLossStreak,
+      sharpeRatio: parseFloat(sharpeRatio.toFixed(3)),
+      worthScore,
+      openTrades: trades.filter(t => t.status === 'open').length,
+      totalTrades: trades.length // Including open trades
     };
+  };
+
+  // Migration Functions
+  const handleMigrateToDatabase = async () => {
+    if (trades.length === 0) {
+      setMigrationMessage('No trades to migrate');
+      return;
+    }
+
+    setMigrationStatus('migrating');
+    setMigrationMessage(`Migrating ${trades.length} trades to database...`);
+
+    const result = await migrateLocalTradesToDatabase(trades, session.user.id);
+    
+    if (result.success) {
+      setMigrationStatus('success');
+      setMigrationMessage(`Successfully migrated ${result.count} trades to database!`);
+      
+      // Load trades from database to replace local state
+      setTimeout(() => {
+        loadTradesFromDatabaseHandler();
+      }, 2000);
+    } else {
+      setMigrationStatus('error');
+      setMigrationMessage(`Migration failed: ${result.error}`);
+    }
+  };
+
+  const loadTradesFromDatabaseHandler = async () => {
+    const result = await loadTradesFromDatabase(session.user.id);
+    
+    if (result.success) {
+      setTrades(result.trades);
+      setMigrationMessage('Trades loaded from database successfully!');
+    } else {
+      setMigrationMessage(`Failed to load trades: ${result.error}`);
+    }
+  };
+
+  // Auto-show migration modal on first load if we have local trades
+  const checkForMigrationNeeded = async () => {
+    console.log('Checking for migration needed...');
+    
+    // First, always try to load existing trades from database
+    const dbResult = await loadTradesFromDatabase(session.user.id);
+    
+    if (dbResult.success && dbResult.trades.length > 0) {
+      // User already has trades in database - use those and skip migration
+      console.log('Found', dbResult.trades.length, 'trades in database, loading them');
+      setTrades(dbResult.trades);
+      return;
+    }
+    
+    // Only consider migration if we have local trades AND no database trades
+    if (trades.length > 0) {
+      console.log('Found', trades.length, 'local trades and no database trades');
+      // Only show migration modal for non-sample data or if user explicitly wants to migrate
+      if (trades.length > 3 || !trades.every(t => [1,2,3].includes(t.id))) {
+        setShowMigrationModal(true);
+      } else {
+        console.log('Detected sample trades, not showing auto-migration modal');
+      }
+    }
+  };
+
+  // Quick migration for trade journal button
+  const handleQuickMigration = async () => {
+    if (trades.length === 0) {
+      alert('No trades to migrate');
+      return;
+    }
+
+    setQuickMigrating(true);
+    const result = await migrateLocalTradesToDatabase(trades, session.user.id);
+    
+    if (result.success) {
+      // Load fresh data from database
+      const loadResult = await loadTradesFromDatabase(session.user.id);
+      if (loadResult.success) {
+        setTrades(loadResult.trades);
+        alert(`Successfully migrated ${result.count} trades to database!`);
+      }
+    } else {
+      alert(`Migration failed: ${result.error}`);
+    }
+    
+    setQuickMigrating(false);
+  };
+
+  // Emergency cleanup function
+  const handleEmergencyCleanup = async () => {
+    setCleaning(true);
+    const result = await deleteAllUserTrades(session.user.id);
+    
+    if (result.success) {
+      setTrades([]);
+      alert(`Successfully deleted ${result.deletedCount} trades from database`);
+      setShowCleanupModal(false);
+    } else {
+      alert(`Cleanup failed: ${result.error}`);
+    }
+    
+    setCleaning(false);
   };
 
   const stats = calculateStats();
   const riskLevel = getRiskLevel();
+
+  // Load user profile for avatar
+  useEffect(() => {
+    const loadUserProfile = async () => {
+      if (session?.user?.id) {
+        try {
+          const { data: profileData } = await supabase
+            .from('profiles')
+            .select('profile_picture_url, avatar_url')
+            .eq('id', session.user.id)
+            .single();
+          
+          if (profileData) {
+            setUserProfile(profileData);
+          }
+        } catch (error) {
+          console.error('Error loading user profile:', error);
+        }
+      }
+    };
+
+    loadUserProfile();
+  }, [session?.user?.id]);
+
+  // Check for migration on component mount
+  useEffect(() => {
+    checkForMigrationNeeded();
+  }, [session.user.id]);
 
   // Enhanced filtering logic
   const filteredTrades = trades.filter(trade => {
@@ -1216,9 +1687,31 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
             {/* User Profile */}
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center">
-                  <User className="h-6 w-6 text-white" />
-                </div>
+                <button
+                  onClick={() => setActiveTab('profile')}
+                  className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center hover:bg-blue-700 transition-colors overflow-hidden"
+                  title="Open Profile Settings"
+                >
+                  {(() => {
+                    // Priority: uploaded profile picture > Google avatar
+                    const avatarUrl = userProfile?.profile_picture_url || session?.user?.user_metadata?.avatar_url;
+                    
+                    return avatarUrl ? (
+                      <img
+                        src={avatarUrl}
+                        alt="Profile"
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          e.target.style.display = 'none';
+                          e.target.nextSibling.style.display = 'flex';
+                        }}
+                      />
+                    ) : null;
+                  })()}
+                  <User className="h-6 w-6 text-white" style={{ 
+                    display: (userProfile?.profile_picture_url || session?.user?.user_metadata?.avatar_url) ? 'none' : 'block' 
+                  }} />
+                </button>
                 <div className="hidden md:block text-right">
                   <p className="text-sm font-medium text-gray-700">
                     {session?.user?.user_metadata?.full_name || session?.user?.email?.split('@')[0] || 'User'}
@@ -1245,13 +1738,13 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
       {/* Navigation Tabs */}
       <div className="flex flex-wrap justify-center mb-8 bg-white rounded-xl p-2 shadow-lg">
         {[
+          { id: 'dashboard', label: 'Dashboard', icon: Home },
           { id: 'risk-calculator', label: 'Risk Calculator', icon: Calculator },
           { id: 'journal', label: 'Trade Journal', icon: BookOpen },
           { id: 'charts', label: 'Charts', icon: LineChart },
           { id: 'calendar', label: 'Calendar', icon: Calendar },
           { id: 'news', label: 'Market News', icon: Newspaper },
           { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-          { id: 'ai-analysis', label: 'AI Analysis', icon: Brain },
           { id: 'goals', label: 'Trading Goals', icon: Target }
         ].map(tab => {
           const Icon = tab.icon;
@@ -1271,6 +1764,29 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
           );
         })}
       </div>
+
+      {/* Dashboard Tab */}
+      {activeTab === 'dashboard' && (
+        <Dashboard supabase={supabase} user={session?.user} />
+      )}
+
+      {/* Profile Tab */}
+      {activeTab === 'profile' && (
+        <Profile 
+          supabase={supabase} 
+          user={session?.user} 
+          trades={trades}
+          stats={stats}
+          onProfileUpdate={(updatedProfile) => {
+            setUserProfile(updatedProfile);
+          }}
+        />
+      )}
+
+      {/* Enhanced Analytics Tab */}
+      {activeTab === 'analytics' && (
+        <Analytics supabase={supabase} user={session?.user} />
+      )}
 
       {/* Risk Calculator Tab */}
       {activeTab === 'risk-calculator' && (
@@ -1413,7 +1929,31 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
               <div className="flex items-center mb-4">
                 <Shield className="h-6 w-6 text-orange-600 mr-2" />
                 <h2 className="text-2xl font-semibold text-gray-800">Risk Analysis</h2>
+                {riskResults.riskLevel && (
+                  <span className={`ml-3 px-2 py-1 text-xs font-semibold rounded-full ${
+                    riskResults.riskLevel === 'HIGH' ? 'bg-red-100 text-red-800' :
+                    riskResults.riskLevel === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' :
+                    'bg-green-100 text-green-800'
+                  }`}>
+                    {riskResults.riskLevel} RISK
+                  </span>
+                )}
               </div>
+              
+              {/* Risk Warnings */}
+              {riskResults.warnings && riskResults.warnings.length > 0 && (
+                <div className="mb-6 space-y-2">
+                  {riskResults.warnings.map((warning, index) => (
+                    <div key={index} className={`p-3 rounded-lg border-l-4 ${
+                      warning.type === 'CRITICAL' ? 'bg-red-50 border-red-500 text-red-800' :
+                      warning.type === 'WARNING' ? 'bg-yellow-50 border-yellow-500 text-yellow-800' :
+                      'bg-blue-50 border-blue-500 text-blue-800'
+                    }`}>
+                      <p className="text-sm font-medium">{warning.message}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               <div className="space-y-4">
                 <div className="flex justify-between items-center py-2 border-b border-gray-100">
@@ -1423,6 +1963,12 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
                 <div className="flex justify-between items-center py-2 border-b border-gray-100">
                   <span className="text-gray-600">Break-even Win Rate</span>
                   <span className="font-semibold">{riskResults.breakEvenWinRate}%</span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                  <span className="text-gray-600">Trade Setup</span>
+                  <span className={`font-semibold ${riskResults.isValidTrade ? 'text-green-600' : 'text-red-600'}`}>
+                    {riskResults.isValidTrade ? '✓ Valid' : '✗ Invalid'}
+                  </span>
                 </div>
               </div>
             </div>
@@ -1658,6 +2204,32 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
               >
                 <Upload className="h-5 w-5 mr-2" />
                 Import Trade History
+              </button>
+
+              <button
+                onClick={handleQuickMigration}
+                disabled={quickMigrating}
+                className="bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 transition-colors flex items-center disabled:bg-purple-400 disabled:cursor-not-allowed"
+              >
+                {quickMigrating ? (
+                  <>
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                    Migrating...
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="h-5 w-5 mr-2" />
+                    Migrate to DB
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() => setShowCleanupModal(true)}
+                className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors flex items-center text-sm"
+              >
+                <Trash2 className="h-4 w-4 mr-1" />
+                Clear All
               </button>
 
             </div>
@@ -2047,10 +2619,17 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
                       </button>
                       <button
                         onClick={importSelectedTrades}
-                        disabled={selectedImports.length === 0}
+                        disabled={selectedImports.length === 0 || importing}
                         className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
                       >
-                        Import {selectedImports.length} Selected Trades
+                        {importing ? (
+                          <>
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2 inline-block"></div>
+                            Importing...
+                          </>
+                        ) : (
+                          `Import ${selectedImports.length} Selected Trades`
+                        )}
                       </button>
                     </div>
                   </div>
@@ -2381,13 +2960,24 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
               const dayTrades = getTradesForDate(dateStr);
               const dayPnL = getDayPnL(dateStr);
               const isToday = dateStr === formatDate(new Date());
+              
+              // Calculate heat intensity based on PnL
+              const maxDayPnL = Math.max(...Array.from({ length: getDaysInMonth(currentDate) })
+                .map((_, i) => Math.abs(getDayPnL(formatDate(new Date(currentDate.getFullYear(), currentDate.getMonth(), i + 1))))));
+              const intensity = maxDayPnL > 0 ? Math.min(Math.abs(dayPnL) / maxDayPnL, 1) : 0;
+              const intensityLevel = intensity > 0.7 ? '500' : intensity > 0.4 ? '300' : intensity > 0.1 ? '100' : '50';
+              
+              const getBackgroundColor = () => {
+                if (dayPnL === 0 || dayTrades.length === 0) return isToday ? 'bg-blue-50 border-blue-300' : 'border-gray-200 hover:bg-gray-50';
+                if (isToday) return dayPnL > 0 ? 'bg-blue-100 border-blue-300' : 'bg-blue-100 border-blue-300';
+                return dayPnL > 0 ? `bg-green-${intensityLevel} border-green-200 hover:bg-green-${intensityLevel === '50' ? '100' : '400'}` : 
+                                   `bg-red-${intensityLevel} border-red-200 hover:bg-red-${intensityLevel === '50' ? '100' : '400'}`;
+              };
 
               return (
                 <div
                   key={day}
-                  className={`p-2 h-24 border rounded-lg cursor-pointer transition-colors ${
-                    isToday ? 'bg-blue-50 border-blue-300' : 'border-gray-200 hover:bg-gray-50'
-                  }`}
+                  className={`p-2 h-24 border rounded-lg cursor-pointer transition-colors ${getBackgroundColor()}`}
                   onClick={() => setSelectedDate(new Date(currentDate.getFullYear(), currentDate.getMonth(), day))}
                 >
                   <div className="text-sm font-semibold text-gray-900 mb-1">{day}</div>
@@ -2444,156 +3034,9 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
         </div>
       )}
 
-      {/* Analytics Tab */}
-      {activeTab === 'analytics' && (
-        <div className="space-y-6">
-          {/* Performance Overview */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div className="bg-white rounded-xl shadow-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Total P&L</p>
-                  <p className={`text-2xl font-bold ${
-                    parseFloat(stats.totalPnL) > 0 ? 'text-green-600' : 
-                    parseFloat(stats.totalPnL) < 0 ? 'text-red-600' : 'text-gray-600'
-                  }`}>
-                    ${stats.totalPnL}
-                  </p>
-                </div>
-                <DollarSign className="h-8 w-8 text-green-600" />
-              </div>
-            </div>
+      {/* Old Analytics Tab - This section was removed and replaced with the new Analytics component at line 1293 */}
 
-            <div className="bg-white rounded-xl shadow-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Win Rate</p>
-                  <p className="text-2xl font-bold text-blue-600">{stats.winRate}%</p>
-                </div>
-                <Award className="h-8 w-8 text-blue-600" />
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl shadow-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Total Trades</p>
-                  <p className="text-2xl font-bold text-purple-600">{stats.totalTrades}</p>
-                </div>
-                <Activity className="h-8 w-8 text-purple-600" />
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl shadow-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Open Trades</p>
-                  <p className="text-2xl font-bold text-orange-600">{stats.openTrades}</p>
-                </div>
-                <Clock className="h-8 w-8 text-orange-600" />
-              </div>
-            </div>
-          </div>
-
-          {/* Detailed Statistics */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white rounded-xl shadow-lg p-6">
-              <h3 className="text-xl font-semibold text-gray-800 mb-4 flex items-center">
-                <BarChart3 className="h-5 w-5 text-blue-600 mr-2" />
-                Performance Metrics
-              </h3>
-              
-              <div className="space-y-4">
-                <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                  <span className="text-gray-600">Winning Trades</span>
-                  <span className="font-semibold text-green-600">{stats.winningTrades}</span>
-                </div>
-                
-                <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                  <span className="text-gray-600">Losing Trades</span>
-                  <span className="font-semibold text-red-600">{stats.losingTrades}</span>
-                </div>
-                
-                <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                  <span className="text-gray-600">Average Win</span>
-                  <span className="font-semibold text-green-600">${stats.avgWin}</span>
-                </div>
-                
-                <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                  <span className="text-gray-600">Average Loss</span>
-                  <span className="font-semibold text-red-600">$-{stats.avgLoss}</span>
-                </div>
-                
-                <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                  <span className="text-gray-600">Profit Factor</span>
-                  <span className={`font-semibold ${
-                    parseFloat(stats.profitFactor) > 1 ? 'text-green-600' : 'text-red-600'
-                  }`}>
-                    {stats.profitFactor}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl shadow-lg p-6">
-              <h3 className="text-xl font-semibold text-gray-800 mb-4 flex items-center">
-                <Target className="h-5 w-5 text-purple-600 mr-2" />
-                Trading Insights
-              </h3>
-              
-              <div className="space-y-4">
-                {parseFloat(stats.profitFactor) < 1 && (
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                    <div className="flex items-start">
-                      <AlertCircle className="h-5 w-5 text-red-600 mr-2 mt-0.5" />
-                      <div>
-                        <h4 className="font-semibold text-red-800">Low Profit Factor</h4>
-                        <p className="text-sm text-red-700">Your average losses exceed average wins. Focus on better risk/reward ratios.</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                
-                {parseFloat(stats.winRate) < 50 && (
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                    <div className="flex items-start">
-                      <AlertTriangle className="h-5 w-5 text-yellow-600 mr-2 mt-0.5" />
-                      <div>
-                        <h4 className="font-semibold text-yellow-800">Low Win Rate</h4>
-                        <p className="text-sm text-yellow-700">Consider improving your entry timing or trade selection criteria.</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                
-                {parseFloat(stats.totalPnL) > 0 && parseFloat(stats.winRate) > 60 && (
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                    <div className="flex items-start">
-                      <Award className="h-5 w-5 text-green-600 mr-2 mt-0.5" />
-                      <div>
-                        <h4 className="font-semibold text-green-800">Strong Performance</h4>
-                        <p className="text-sm text-green-700">Excellent win rate and positive P&L. Keep up the consistent approach!</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <h4 className="font-semibold text-blue-800 mb-2">Key Recommendations</h4>
-                  <ul className="text-sm text-blue-700 space-y-1">
-                    <li>• Maintain consistent position sizing (2% rule)</li>
-                    <li>• Focus on setups with 1:2+ risk/reward ratios</li>
-                    <li>• Review and learn from losing trades</li>
-                    <li>• Keep detailed trade notes for pattern recognition</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* AI Analysis Tab */}
+      {/* DISABLED AI ANALYSIS TAB
       {activeTab === 'ai-analysis' && (
         <div className="space-y-6">
           <div className="bg-white rounded-xl shadow-lg p-6">
@@ -2840,46 +3283,115 @@ Identify successful patterns, unsuccessful patterns, and recommend strategy impr
           </div>
         </div>
       )}
+      */
 
-      {/* API Key Modal */}
-      {showApiKeyModal && (
+      {/* DISABLED API KEY MODAL - AI Analysis has been removed */}
+
+      {/* Migration Modal */}
+      {showMigrationModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
-            <h3 className="text-xl font-semibold text-gray-800 mb-4">Connect Claude AI</h3>
+            <h3 className="text-xl font-semibold text-gray-800 mb-4">
+              Migrate Your Trades to Database
+            </h3>
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Anthropic API Key
-                </label>
-                <input
-                  type="password"
-                  value={anthropicApiKey}
-                  onChange={(e) => setAnthropicApiKey(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  placeholder="sk-ant-..."
-                />
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-start space-x-3">
+                  <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5" />
+                  <div>
+                    <h4 className="font-medium text-blue-900 mb-1">Database Migration Required</h4>
+                    <p className="text-sm text-blue-700">
+                      We found {trades.length} trades in local storage. To enable Dashboard metrics and Analytics, 
+                      these trades need to be saved to the database.
+                    </p>
+                  </div>
+                </div>
               </div>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                <p className="text-sm text-blue-700">
-                  <strong>How to get your API key:</strong><br/>
-                  1. Visit console.anthropic.com<br/>
-                  2. Sign up or log in<br/>
-                  3. Navigate to "API Keys"<br/>
-                  4. Create a new key<br/>
-                  5. Copy and paste it here
-                </p>
+
+              {migrationMessage && (
+                <div className={`p-3 rounded-lg ${
+                  migrationStatus === 'success' ? 'bg-green-50 border border-green-200' :
+                  migrationStatus === 'error' ? 'bg-red-50 border border-red-200' :
+                  'bg-yellow-50 border border-yellow-200'
+                }`}>
+                  <p className={`text-sm ${
+                    migrationStatus === 'success' ? 'text-green-700' :
+                    migrationStatus === 'error' ? 'text-red-700' :
+                    'text-yellow-700'
+                  }`}>
+                    {migrationMessage}
+                  </p>
+                </div>
+              )}
+
+              <div className="flex space-x-3">
+                {migrationStatus === 'success' ? (
+                  <button
+                    onClick={() => setShowMigrationModal(false)}
+                    className="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    Done
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={handleMigrateToDatabase}
+                      disabled={migrationStatus === 'migrating'}
+                      className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                    >
+                      {migrationStatus === 'migrating' ? 'Migrating...' : 'Migrate Now'}
+                    </button>
+                    <button
+                      onClick={() => setShowMigrationModal(false)}
+                      disabled={migrationStatus === 'migrating'}
+                      className="flex-1 bg-gray-500 text-white py-2 rounded-lg hover:bg-gray-600 transition-colors disabled:bg-gray-400"
+                    >
+                      Later
+                    </button>
+                  </>
+                )}
               </div>
-              <div className="flex space-x-4">
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Emergency Cleanup Modal */}
+      {showCleanupModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-xl font-semibold text-red-800 mb-4">
+              ⚠️ Delete ALL Trades
+            </h3>
+            <div className="space-y-4">
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <div className="text-red-700 text-sm">
+                  <p className="font-medium mb-2">This will permanently delete ALL trades from your account!</p>
+                  <p>• All trades in the database will be removed</p>
+                  <p>• Dashboard metrics will reset to zero</p>
+                  <p>• This action CANNOT be undone</p>
+                </div>
+              </div>
+
+              <div className="flex space-x-3">
                 <button
-                  onClick={() => setShowApiKeyModal(false)}
-                  disabled={!anthropicApiKey}
-                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-400"
+                  onClick={handleEmergencyCleanup}
+                  disabled={cleaning}
+                  className="flex-1 bg-red-600 text-white py-2 rounded-lg hover:bg-red-700 transition-colors disabled:bg-red-400 disabled:cursor-not-allowed"
                 >
-                  Connect
+                  {cleaning ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2 inline-block"></div>
+                      Deleting...
+                    </>
+                  ) : (
+                    'Yes, Delete ALL Trades'
+                  )}
                 </button>
                 <button
-                  onClick={() => setShowApiKeyModal(false)}
-                  className="flex-1 bg-gray-500 text-white py-2 rounded-lg hover:bg-gray-600 transition-colors"
+                  onClick={() => setShowCleanupModal(false)}
+                  disabled={cleaning}
+                  className="flex-1 bg-gray-500 text-white py-2 rounded-lg hover:bg-gray-600 transition-colors disabled:bg-gray-400"
                 >
                   Cancel
                 </button>

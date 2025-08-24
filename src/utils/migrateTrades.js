@@ -1,0 +1,372 @@
+import { supabase } from '../supabase';
+
+// Check if user already has trades in database
+export const checkExistingTrades = async (userId) => {
+  try {
+    const { data, error } = await supabase
+      .from('trades')
+      .select('id')
+      .eq('user_id', userId)
+      .limit(1);
+      
+    if (error) throw error;
+    
+    return { success: true, hasExistingTrades: data.length > 0, count: data.length };
+    
+  } catch (error) {
+    console.error('Failed to check existing trades:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+export const migrateLocalTradesToDatabase = async (localTrades, userId, skipDuplicateCheck = false) => {
+  try {
+    console.log('Starting migration of', localTrades.length, 'trades to database');
+    
+    // Only check for existing trades if not explicitly skipping (for imports)
+    if (!skipDuplicateCheck) {
+      const existingCheck = await checkExistingTrades(userId);
+      if (existingCheck.success && existingCheck.hasExistingTrades) {
+        return { 
+          success: false, 
+          error: 'User already has trades in database. Migration cancelled to prevent duplicates.' 
+        };
+      }
+    }
+    
+    // Helper function for European number parsing
+    const parseEuropeanNumber = (numStr) => {
+      if (!numStr || numStr === '') return 0;
+      const str = String(numStr).replace(/\s/g, '');
+      
+      // If it contains both comma and dot, determine which is decimal separator
+      if (str.includes(',') && str.includes('.')) {
+        // European format: 1.234,56 (dot as thousands, comma as decimal)
+        if (str.lastIndexOf(',') > str.lastIndexOf('.')) {
+          return parseFloat(str.replace(/\./g, '').replace(',', '.')) || 0;
+        }
+        // US format: 1,234.56 (comma as thousands, dot as decimal)
+        else {
+          return parseFloat(str.replace(/,/g, '')) || 0;
+        }
+      }
+      // Only comma - likely European decimal separator
+      else if (str.includes(',') && !str.includes('.')) {
+        return parseFloat(str.replace(',', '.')) || 0;
+      }
+      // Only dot or no separators - standard parsing
+      else {
+        return parseFloat(str) || 0;
+      }
+    };
+
+    // Transform local trades to match database schema
+    const transformedTrades = localTrades.map(trade => ({
+      user_id: userId,
+      date: trade.date,
+      pair: trade.pair,
+      type: trade.type,
+      entry: parseEuropeanNumber(trade.entry),
+      exit: trade.exit ? parseEuropeanNumber(trade.exit) : null,
+      stop_loss: trade.stopLoss ? parseEuropeanNumber(trade.stopLoss) : null,
+      take_profit: trade.takeProfit ? parseEuropeanNumber(trade.takeProfit) : null,
+      lot_size: parseEuropeanNumber(trade.lotSize),
+      pnl: trade.isImported ? trade.pnl : parseEuropeanNumber(trade.pnl) || 0,
+      status: trade.status,
+      notes: trade.notes || '',
+      setup: trade.setup || '',
+      rr: trade.rr ? parseFloat(trade.rr) : null,
+      // Add default values for new fields
+      entry_time: null,
+      exit_time: null,
+      pnl_percentage: 0,
+      outcome: trade.pnl > 0 ? 'win' : trade.pnl < 0 ? 'loss' : 'breakeven',
+      hold_time_minutes: 0,
+      slippage_pips: 0,
+      commission: 0,
+      emotion_before: null,
+      emotion_after: null,
+      chart_before: null,
+      chart_after: null,
+      market_session: null,
+      volatility_level: null
+    }));
+
+    // Insert trades in batches to avoid timeout
+    const batchSize = 50;
+    const results = [];
+    
+    for (let i = 0; i < transformedTrades.length; i += batchSize) {
+      const batch = transformedTrades.slice(i, i + batchSize);
+      
+      const { data, error } = await supabase
+        .from('trades')
+        .insert(batch)
+        .select();
+        
+      if (error) {
+        console.error('Error inserting batch:', error);
+        throw error;
+      }
+      
+      results.push(...data);
+      console.log(`Migrated batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(transformedTrades.length/batchSize)}`);
+    }
+
+    console.log('Successfully migrated', results.length, 'trades');
+    return { success: true, count: results.length };
+    
+  } catch (error) {
+    console.error('Migration failed:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+export const loadTradesFromDatabase = async (userId) => {
+  try {
+    const { data, error } = await supabase
+      .from('trades')
+      .select('*')
+      .eq('user_id', userId)
+      .order('date', { ascending: false });
+      
+    if (error) throw error;
+    
+    // Transform database trades back to local format
+    const transformedTrades = data.map(trade => ({
+      id: trade.id,
+      date: trade.date,
+      pair: trade.pair,
+      type: trade.type,
+      entry: trade.entry,
+      exit: trade.exit,
+      stopLoss: trade.stop_loss,
+      takeProfit: trade.take_profit,
+      lotSize: trade.lot_size,
+      pnl: trade.pnl,
+      status: trade.status,
+      notes: trade.notes,
+      setup: trade.setup,
+      rr: trade.rr
+    }));
+    
+    return { success: true, trades: transformedTrades };
+    
+  } catch (error) {
+    console.error('Failed to load trades from database:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+// Single trade operations
+export const addTradeToDatabase = async (trade, userId) => {
+  try {
+    console.log('Attempting to save trade to database:', trade);
+    console.log('User ID:', userId);
+    
+    // Validate required fields
+    if (!trade.date || !trade.pair || !trade.type || !trade.entry || !trade.lotSize) {
+      throw new Error(`Missing required fields: date=${trade.date}, pair=${trade.pair}, type=${trade.type}, entry=${trade.entry}, lotSize=${trade.lotSize}`);
+    }
+
+    // Helper function for European number parsing
+    const parseEuropeanNumber = (numStr) => {
+      if (!numStr || numStr === '') return 0;
+      const str = String(numStr).replace(/\s/g, '');
+      
+      // If it contains both comma and dot, determine which is decimal separator
+      if (str.includes(',') && str.includes('.')) {
+        // European format: 1.234,56 (dot as thousands, comma as decimal)
+        if (str.lastIndexOf(',') > str.lastIndexOf('.')) {
+          return parseFloat(str.replace(/\./g, '').replace(',', '.')) || 0;
+        }
+        // US format: 1,234.56 (comma as thousands, dot as decimal)
+        else {
+          return parseFloat(str.replace(/,/g, '')) || 0;
+        }
+      }
+      // Only comma - likely European decimal separator
+      else if (str.includes(',') && !str.includes('.')) {
+        return parseFloat(str.replace(',', '.')) || 0;
+      }
+      // Only dot or no separators - standard parsing
+      else {
+        return parseFloat(str) || 0;
+      }
+    };
+
+    const transformedTrade = {
+      user_id: userId,
+      date: trade.date,
+      pair: trade.pair,
+      type: trade.type,
+      entry: parseEuropeanNumber(trade.entry),
+      exit: trade.exit ? parseEuropeanNumber(trade.exit) : null,
+      stop_loss: trade.stopLoss ? parseEuropeanNumber(trade.stopLoss) : null,
+      take_profit: trade.takeProfit ? parseEuropeanNumber(trade.takeProfit) : null,
+      lot_size: parseEuropeanNumber(trade.lotSize),
+      pnl: trade.isImported ? trade.pnl : parseEuropeanNumber(trade.pnl) || 0,
+      status: trade.status || 'open',
+      notes: trade.notes || '',
+      setup: trade.setup || '',
+      rr: trade.rr ? parseFloat(trade.rr) : null,
+      entry_time: null,
+      exit_time: null,
+      pnl_percentage: 0,
+      outcome: trade.pnl > 0 ? 'win' : trade.pnl < 0 ? 'loss' : 'breakeven',
+      hold_time_minutes: 0,
+      slippage_pips: 0,
+      commission: 0,
+      emotion_before: null,
+      emotion_after: null,
+      chart_before: null,
+      chart_after: null,
+      market_session: null,
+      volatility_level: null
+    };
+
+    console.log('Transformed trade for database:', transformedTrade);
+
+    const { data, error } = await supabase
+      .from('trades')
+      .insert([transformedTrade])
+      .select()
+      .single();
+      
+    if (error) {
+      console.error('Supabase insert error:', error);
+      throw error;
+    }
+    
+    console.log('Successfully inserted trade into database:', data);
+    
+    // Transform back to local format
+    const localTrade = {
+      id: data.id,
+      date: data.date,
+      pair: data.pair,
+      type: data.type,
+      entry: data.entry,
+      exit: data.exit,
+      stopLoss: data.stop_loss,
+      takeProfit: data.take_profit,
+      lotSize: data.lot_size,
+      pnl: data.pnl,
+      status: data.status,
+      notes: data.notes,
+      setup: data.setup,
+      rr: data.rr
+    };
+
+    console.log('Returning local format trade:', localTrade);
+    return { success: true, trade: localTrade };
+    
+  } catch (error) {
+    console.error('Failed to add trade to database:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+export const updateTradeInDatabase = async (trade, userId) => {
+  try {
+    // Helper function for European number parsing
+    const parseEuropeanNumber = (numStr) => {
+      if (!numStr || numStr === '') return 0;
+      const str = String(numStr).replace(/\s/g, '');
+      
+      // If it contains both comma and dot, determine which is decimal separator
+      if (str.includes(',') && str.includes('.')) {
+        // European format: 1.234,56 (dot as thousands, comma as decimal)
+        if (str.lastIndexOf(',') > str.lastIndexOf('.')) {
+          return parseFloat(str.replace(/\./g, '').replace(',', '.')) || 0;
+        }
+        // US format: 1,234.56 (comma as thousands, dot as decimal)
+        else {
+          return parseFloat(str.replace(/,/g, '')) || 0;
+        }
+      }
+      // Only comma - likely European decimal separator
+      else if (str.includes(',') && !str.includes('.')) {
+        return parseFloat(str.replace(',', '.')) || 0;
+      }
+      // Only dot or no separators - standard parsing
+      else {
+        return parseFloat(str) || 0;
+      }
+    };
+
+    const transformedTrade = {
+      user_id: userId,
+      date: trade.date,
+      pair: trade.pair,
+      type: trade.type,
+      entry: parseEuropeanNumber(trade.entry),
+      exit: trade.exit ? parseEuropeanNumber(trade.exit) : null,
+      stop_loss: trade.stopLoss ? parseEuropeanNumber(trade.stopLoss) : null,
+      take_profit: trade.takeProfit ? parseEuropeanNumber(trade.takeProfit) : null,
+      lot_size: parseEuropeanNumber(trade.lotSize),
+      pnl: trade.isImported ? trade.pnl : parseEuropeanNumber(trade.pnl) || 0,
+      status: trade.status,
+      notes: trade.notes || '',
+      setup: trade.setup || '',
+      rr: trade.rr ? parseFloat(trade.rr) : null,
+      outcome: trade.pnl > 0 ? 'win' : trade.pnl < 0 ? 'loss' : 'breakeven'
+    };
+
+    const { data, error } = await supabase
+      .from('trades')
+      .update(transformedTrade)
+      .eq('id', trade.id)
+      .eq('user_id', userId)
+      .select()
+      .single();
+      
+    if (error) throw error;
+    
+    return { success: true, trade: data };
+    
+  } catch (error) {
+    console.error('Failed to update trade in database:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+export const deleteTradeFromDatabase = async (tradeId, userId) => {
+  try {
+    const { error } = await supabase
+      .from('trades')
+      .delete()
+      .eq('id', tradeId)
+      .eq('user_id', userId);
+      
+    if (error) throw error;
+    
+    return { success: true };
+    
+  } catch (error) {
+    console.error('Failed to delete trade from database:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+// Emergency function to delete ALL trades for a user (use with caution!)
+export const deleteAllUserTrades = async (userId) => {
+  try {
+    console.log('WARNING: Deleting ALL trades for user:', userId);
+    
+    const { data, error } = await supabase
+      .from('trades')
+      .delete()
+      .eq('user_id', userId)
+      .select();
+      
+    if (error) throw error;
+    
+    console.log('Deleted', data.length, 'trades');
+    return { success: true, deletedCount: data.length };
+    
+  } catch (error) {
+    console.error('Failed to delete user trades:', error);
+    return { success: false, error: error.message };
+  }
+};
