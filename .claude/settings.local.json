@@ -9,9 +9,20 @@
       "Bash(npm install:*)",
       "Bash(npm run build:*)",
       "Bash(npx eslint:*)",
-      "Bash(true)"
+      "Bash(true)",
+      "Bash(mkdir:*)",
+      "Bash(npm test)",
+      "Bash(npm run start:*)",
+      "Bash(pkill:*)",
+      "Bash(killall:*)",
+      "Bash(npm ls:*)",
+      "Read(//tmp/**)"
     ],
     "deny": [],
-    "ask": []
+    "ask": [],
+    "additionalDirectories": [
+      "/tmp",
+      "/mnt/c/Users/Addis/Downloads"
+    ]
   }
 }

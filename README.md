@@ -1,70 +1,111 @@
-# Getting Started with Create React App
+📊 Professional Trading Journal
+🔹 Overview
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+This project is a React-based professional trading journal and risk management platform. It combines a risk calculator, trade journal, analytics dashboard, market news, economic calendar, and even AI-powered trade analysis to help traders improve performance and manage risk effectively.
 
-## Available Scripts
+✨ Features
 
-In the project directory, you can run:
+📈 Risk Calculator – Automatically calculates position sizing, pip values, risk/reward ratio, and break-even win rate.
 
-### `npm start`
+📒 Trade Journal – Record, edit, filter, and track trades with full details (entry, exit, stop loss, take profit, notes, setups).
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+📂 Import Trade History – Supports CSV/TXT broker exports, MT4/MT5 formats, and custom parsing.
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+📰 Market News & Economic Calendar – Live TradingView news feed and economic events integration.
 
-### `npm test`
+📊 Analytics – Performance statistics: win rate, profit factor, average win/loss, open vs. closed trades.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+🤖 AI Analysis (Claude Integration) – Upload your API key and get professional insights on performance, risk, and strategies.
 
-### `npm run build`
+🎯 Trading Goals – Set, track, and manage milestones for long-term trading improvement.
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+📅 Calendar View – Visualize trades and P&L by date.
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+💹 Advanced Charts – Embedded TradingView professional charting with indicators and drawing tools.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+🛠️ Tech Stack
 
-### `npm run eject`
+Frontend: React + TailwindCSS
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+Icons: lucide-react
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+Charts/News/Calendar: TradingView Widgets
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+AI Analysis: Anthropic Claude API (optional, user-provided API key)
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+🚀 Installation & Setup
+# 1. Clone the repository
+git clone https://github.com/LurkingFox/Tradeworth.git
 
-## Learn More
+# 2. Enter the project folder
+cd professional-trading-journal
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+# 3. Install dependencies
+npm install
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+# 4. Run the development server
+npm start
 
-### Code Splitting
+📖 Usage
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+Navigate between tabs:
 
-### Analyzing the Bundle Size
+Risk Calculator → define trade parameters and auto-calc position size.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+Journal → log trades, edit, import broker history.
 
-### Making a Progressive Web App
+Charts → use TradingView charts for live analysis.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+News/Calendar → follow real-time news and economic events.
 
-### Advanced Configuration
+Analytics → review performance metrics.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+AI Analysis → get professional recommendations (Claude API key required).
 
-### Deployment
+Goals → track your personal trading objectives.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+Import trade history via:
 
-### `npm run build` fails to minify
+CSV/TXT file upload
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+Copy-paste raw trade history
+
+📂 Project Structure
+
+src/
+
+│── App.js             # Main application with all features
+
+│── components/        # (Future: Extract reusable UI components here)
+
+│── styles/            # TailwindCSS styling
+
+public/
+
+│── index.html
+
+✅ Roadmap
+
+ Add more broker-specific import formats
+
+ Cloud storage for trades & goals
+
+ Multi-language support
+
+ Mobile-friendly layout
+
+🤝 Contributing
+
+Contributions are welcome!
+
+Fork the repository
+
+Create a new branch (git checkout -b feature-name)
+
+Commit your changes (git commit -m "Add feature")
+
+Push and open a Pull Request
+
+📜 License
+
+This project is licensed under the MIT License.
