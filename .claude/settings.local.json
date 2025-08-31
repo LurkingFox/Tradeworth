@@ -17,13 +17,39 @@
       "Bash(killall:*)",
       "Bash(npm ls:*)",
       "Read(//tmp/**)",
-      "Bash(psql:*)"
+      "Bash(psql:*)",
+      "Bash(npm run lint)",
+      "Bash(npm run:*)",
+      "Bash(node:*)",
+      "Bash(npm --version)",
+      "Bash(timeout 30s npm run build)",
+      "Bash(find:*)",
+      "Bash(curl:*)",
+      "Bash(lsof:*)",
+      "Bash(kill:*)",
+      "Bash(for:*)",
+      "Bash(do echo \"==> $file <==\")",
+      "Bash(head:*)",
+      "Bash(done)",
+      "Bash(timeout 10s npm start)",
+      "Bash(timeout 15s npm start)",
+      "Bash(timeout 20s npm start)",
+      "Bash(npx react-scripts build:*)",
+      "Bash(npx babel-node:*)",
+      "Bash(timeout 30s npm start:*)",
+      "Bash(PORT=3001 timeout 10s npm start)",
+      "Bash(env PORT=3001 timeout 10s npm start)",
+      "WebSearch",
+      "Bash(timeout 10s npm run build)",
+      "Bash(timeout:*)",
+      "Bash(ps:*)"
     ],
     "deny": [],
     "ask": [],
     "additionalDirectories": [
       "/tmp",
-      "/mnt/c/Users/Addis/Downloads"
+      "/mnt/c/Users/Addis/Downloads",
+      "/mnt/c/Users/Addis/Desktop"
     ]
   }
 }

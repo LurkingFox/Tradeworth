@@ -1,4 +1,5 @@
-import { supabase } from '../supabase';
+import { supabase } from '../../supabase';
+import { refreshUserMetrics } from './profileMetrics';
 
 // Check if user already has trades in database
 export const checkExistingTrades = async (userId) => {
@@ -71,7 +72,7 @@ export const migrateLocalTradesToDatabase = async (localTrades, userId, skipDupl
       stop_loss: trade.stopLoss ? parseEuropeanNumber(trade.stopLoss) : null,
       take_profit: trade.takeProfit ? parseEuropeanNumber(trade.takeProfit) : null,
       lot_size: parseEuropeanNumber(trade.lotSize),
-      pnl: trade.isImported ? trade.pnl : parseEuropeanNumber(trade.pnl) || 0,
+      pnl: (trade.isImported || typeof trade.pnl === 'number') ? trade.pnl : parseEuropeanNumber(trade.pnl) || 0,
       status: trade.status,
       notes: trade.notes || '',
       setup: trade.setup || '',
@@ -114,6 +115,10 @@ export const migrateLocalTradesToDatabase = async (localTrades, userId, skipDupl
     }
 
     console.log('Successfully migrated', results.length, 'trades');
+    
+    // Refresh user metrics after migration
+    await refreshUserMetrics(userId);
+    
     return { success: true, count: results.length };
     
   } catch (error) {
@@ -122,15 +127,37 @@ export const migrateLocalTradesToDatabase = async (localTrades, userId, skipDupl
   }
 };
 
+
 export const loadTradesFromDatabase = async (userId) => {
   try {
+    console.log('🔍 Loading trades from database for user:', userId);
+    
     const { data, error } = await supabase
       .from('trades')
       .select('*')
       .eq('user_id', userId)
-      .order('date', { ascending: false });
+      .order('date', { ascending: false })
+      .limit(10000); // Explicit high limit to override Supabase's default 1000 row limit
       
     if (error) throw error;
+    
+    console.log(`✅ Loaded ${data?.length || 0} trades from database`);
+    
+    // Log sample of data
+    if (data && data.length > 0) {
+      console.log('First trade:', {
+        id: data[0].id,
+        date: data[0].date,
+        pair: data[0].pair,
+        pnl: data[0].pnl
+      });
+      console.log('Last trade:', {
+        id: data[data.length - 1].id,
+        date: data[data.length - 1].date,
+        pair: data[data.length - 1].pair,
+        pnl: data[data.length - 1].pnl
+      });
+    }
     
     // Transform database trades back to local format
     const transformedTrades = data.map(trade => ({
@@ -205,7 +232,7 @@ export const addTradeToDatabase = async (trade, userId) => {
       stop_loss: trade.stopLoss ? parseEuropeanNumber(trade.stopLoss) : null,
       take_profit: trade.takeProfit ? parseEuropeanNumber(trade.takeProfit) : null,
       lot_size: parseEuropeanNumber(trade.lotSize),
-      pnl: trade.isImported ? trade.pnl : parseEuropeanNumber(trade.pnl) || 0,
+      pnl: (trade.isImported || typeof trade.pnl === 'number') ? trade.pnl : parseEuropeanNumber(trade.pnl) || 0,
       status: trade.status || 'open',
       notes: trade.notes || '',
       setup: trade.setup || '',
@@ -259,6 +286,10 @@ export const addTradeToDatabase = async (trade, userId) => {
     };
 
     console.log('Returning local format trade:', localTrade);
+    
+    // Refresh user metrics after adding trade
+    await refreshUserMetrics(userId);
+    
     return { success: true, trade: localTrade };
     
   } catch (error) {
@@ -305,7 +336,7 @@ export const updateTradeInDatabase = async (trade, userId) => {
       stop_loss: trade.stopLoss ? parseEuropeanNumber(trade.stopLoss) : null,
       take_profit: trade.takeProfit ? parseEuropeanNumber(trade.takeProfit) : null,
       lot_size: parseEuropeanNumber(trade.lotSize),
-      pnl: trade.isImported ? trade.pnl : parseEuropeanNumber(trade.pnl) || 0,
+      pnl: (trade.isImported || typeof trade.pnl === 'number') ? trade.pnl : parseEuropeanNumber(trade.pnl) || 0,
       status: trade.status,
       notes: trade.notes || '',
       setup: trade.setup || '',
@@ -322,6 +353,9 @@ export const updateTradeInDatabase = async (trade, userId) => {
       .single();
       
     if (error) throw error;
+    
+    // Refresh user metrics after updating trade
+    await refreshUserMetrics(userId);
     
     return { success: true, trade: data };
     
@@ -340,6 +374,9 @@ export const deleteTradeFromDatabase = async (tradeId, userId) => {
       .eq('user_id', userId);
       
     if (error) throw error;
+    
+    // Refresh user metrics after deleting trade
+    await refreshUserMetrics(userId);
     
     return { success: true };
     
@@ -363,6 +400,10 @@ export const deleteAllUserTrades = async (userId) => {
     if (error) throw error;
     
     console.log('Deleted', data.length, 'trades');
+    
+    // Refresh user metrics after bulk delete
+    await refreshUserMetrics(userId);
+    
     return { success: true, deletedCount: data.length };
     
   } catch (error) {

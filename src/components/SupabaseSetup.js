@@ -81,11 +81,11 @@ REACT_APP_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
                       <Database className="h-4 w-4 text-gray-600" />
                       <span className="text-sm font-medium text-gray-700">SQL Schema File</span>
                     </div>
-                    <span className="text-xs text-gray-500">supabase-schema-clean.sql</span>
+                    <span className="text-xs text-gray-500">DATABASE_SCHEMA.sql</span>
                   </div>
                   <p className="text-sm text-gray-600">
                     1. Open Supabase Dashboard → SQL Editor<br />
-                    2. Copy content from <code className="bg-gray-200 px-1 rounded">supabase-schema-clean.sql</code><br />
+                    2. Copy content from <code className="bg-gray-200 px-1 rounded">DATABASE_SCHEMA.sql</code><br />
                     3. Paste and run the SQL commands
                   </p>
                 </div>

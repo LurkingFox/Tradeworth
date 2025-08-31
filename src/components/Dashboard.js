@@ -1,355 +1,48 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, 
+  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, 
   Tooltip, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, 
-  PolarRadiusAxis, Radar, PieChart, Pie, Cell 
+  PolarRadiusAxis, Radar
 } from 'recharts';
 import { 
   TrendingUp, TrendingDown, DollarSign, Target, 
-  Award, AlertCircle, Activity, Brain
+  Award, AlertCircle, Activity, Brain, Calendar
 } from 'lucide-react';
+import { useDataManager } from '../utils';
+import { Card, CardHeader, CardTitle, CardContent, Badge, Select, Button } from './ui/components';
 
-const Dashboard = ({ supabase, user }) => {
-  const [dashboardData, setDashboardData] = useState({
-    overview: {
-      accountBalance: 0,
-      totalPnL: 0,
-      winRate: 0,
-      totalTrades: 0,
-      monthlyPnL: 0
-    },
-    worthScore: {
-      overall: 0,
-      winRate: 0,
-      timing: 0,
-      discipline: 0,
-      riskManagement: 0,
-      consistency: 0
-    },
-    chartData: {
-      intradayPnL: [],
-      monthlyPerformance: [],
-      heatmapData: []
-    },
-    insights: []
-  });
-
+const Dashboard = ({ accountBalance }) => {
+  const dataManager = useDataManager();
   const [loading, setLoading] = useState(true);
   const [selectedTimeframe, setSelectedTimeframe] = useState('30d');
-  const [allTrades, setAllTrades] = useState([]);
+
+  // Get dynamic account balance from centralized data manager
+  const dynamicBalance = dataManager.getDynamicAccountBalance();
+  const currentBalance = accountBalance || dynamicBalance;
+
+  // Get data from centralized data manager
+  const statistics = dataManager.getStatistics();
+  const chartData = dataManager.getChartData();
+  const portfolioMetrics = dataManager.getPortfolioMetrics(currentBalance);
+  const calendarData = dataManager.getCalendarData();
 
   useEffect(() => {
-    if (user) {
-      loadDashboardData();
-    }
-  }, [user, selectedTimeframe]);
-
-  const loadDashboardData = async () => {
-    setLoading(true);
-    try {
-      await Promise.all([
-        loadOverviewData(),
-        loadWorthScore(),
-        loadChartData(),
-        loadInsights()
-      ]);
-    } catch (error) {
-      console.error('Error loading dashboard data:', error);
-    }
+    // Data is automatically available from dataManager
     setLoading(false);
-  };
+  }, [dataManager, selectedTimeframe]);
 
-  const loadOverviewData = async () => {
-    try {
-      // Get user profile with account balance
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('account_balance, currency')
-        .eq('id', user.id)
-        .single();
-
-      // Get all trades to calculate actual metrics
-      const { data: allTrades } = await supabase
-        .from('trades')
-        .select('*')
-        .eq('user_id', user.id);
-
-      // Calculate actual metrics from trades
-      const closedTrades = allTrades?.filter(t => t.status === 'closed') || [];
-      const winningTrades = closedTrades.filter(t => t.pnl > 0);
-      const totalPnL = closedTrades.reduce((sum, trade) => sum + (trade.pnl || 0), 0);
-      const winRate = closedTrades.length > 0 ? (winningTrades.length / closedTrades.length) * 100 : 0;
-
-      // Get current month PnL
-      const startOfMonth = new Date();
-      startOfMonth.setDate(1);
-      startOfMonth.setHours(0, 0, 0, 0);
-
-      const monthlyTrades = closedTrades.filter(trade => {
-        const tradeDate = new Date(trade.date);
-        return tradeDate >= startOfMonth;
-      });
-
-      const monthlyPnL = monthlyTrades.reduce((sum, trade) => sum + (trade.pnl || 0), 0);
-
-      setDashboardData(prev => ({
-        ...prev,
-        overview: {
-          accountBalance: profile?.account_balance || 10000, // Default starting balance
-          totalPnL: totalPnL,
-          winRate: winRate,
-          totalTrades: closedTrades.length,
-          monthlyPnL: monthlyPnL
-        }
-      }));
-    } catch (error) {
-      console.error('Error loading overview data:', error);
-    }
-  };
-
-  const loadWorthScore = async () => {
-    try {
-      // Get all closed trades for Worth Score calculation
-      const { data: recentTrades } = await supabase
-        .from('trades')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('status', 'closed')
-        .order('date', { ascending: false })
-        .limit(100);
-
-      if (recentTrades && recentTrades.length > 0) {
-        const worthScore = calculateWorthScore(recentTrades);
-        setDashboardData(prev => ({
-          ...prev,
-          worthScore
-        }));
-      } else {
-        // Default scores if no trades
-        setDashboardData(prev => ({
-          ...prev,
-          worthScore: {
-            overall: 0,
-            winRate: 0,
-            timing: 0,
-            discipline: 0,
-            riskManagement: 0,
-            consistency: 0
-          }
-        }));
-      }
-    } catch (error) {
-      console.error('Error loading Worth Score:', error);
-    }
-  };
-
-  const calculateWorthScore = (trades) => {
-    if (trades.length === 0) {
-      return {
-        overall: 0,
-        winRate: 0,
-        timing: 0,
-        discipline: 0,
-        riskManagement: 0,
-        consistency: 0
-      };
-    }
-
-    const totalTrades = trades.length;
-    const winningTrades = trades.filter(t => t.pnl > 0);
-    const losingTrades = trades.filter(t => t.pnl < 0);
-    const winRate = (winningTrades.length / totalTrades) * 100;
-    const totalPnL = trades.reduce((sum, t) => sum + t.pnl, 0);
-    const grossProfit = winningTrades.reduce((sum, t) => sum + t.pnl, 0);
-    const grossLoss = Math.abs(losingTrades.reduce((sum, t) => sum + t.pnl, 0));
-    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : 0;
-
-    // Calculate max loss streak for consistency
-    let currentLossStreak = 0;
-    let maxLossStreak = 0;
-    trades.forEach(trade => {
-      if (trade.pnl < 0) {
-        currentLossStreak++;
-        if (currentLossStreak > maxLossStreak) maxLossStreak = currentLossStreak;
-      } else {
-        currentLossStreak = 0;
-      }
-    });
-
-    // Enhanced 1000-point Worth Score calculation (matching AppContent.js)
-    const baseScore = Math.max(0, Math.min(winRate * 4, 400)); // Win rate component (0-400)
-    const profitScore = Math.max(0, Math.min(profitFactor * 100, 300)); // Profit factor component (0-300)
-    const consistencyScore = Math.max(0, 200 - (maxLossStreak * 20)); // Consistency component (0-200)
-    const experienceScore = Math.min(totalTrades * 2, 100); // Experience component (0-100)
-    const overall = Math.round(baseScore + profitScore + consistencyScore + experienceScore);
-
-    // Component scores (scaled to show individual performance)
-    const winRateScore = Math.min(250, (winRate / 60) * 250); // 0-250 scale
-    const timingScore = experienceScore * 2.5; // Based on experience, scaled to 0-250
-    const disciplineScore = Math.min(250, profitScore * 0.83); // Based on profit factor, scaled to 0-250
-    const riskManagementScore = Math.min(250, consistencyScore * 1.25); // Based on consistency, scaled to 0-250
-    const consistencyScoreDisplay = Math.min(250, consistencyScore * 1.25); // Scaled to 0-250
-
-    return {
-      overall: Math.min(1000, overall),
-      winRate: Math.round(winRateScore),
-      timing: Math.round(timingScore), 
-      discipline: Math.round(disciplineScore),
-      riskManagement: Math.round(riskManagementScore),
-      consistency: Math.round(consistencyScoreDisplay)
-    };
-  };
-
-  const loadChartData = async () => {
-    try {
-      // Get all trades for analysis
-      const { data: tradesData } = await supabase
-        .from('trades')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('date', { ascending: true });
-
-      if (!tradesData) return;
-      
-      // Store trades in state for heatmap month switching
-      setAllTrades(tradesData);
-
-      // Load intraday cumulative PnL for today
-      const today = new Date().toISOString().split('T')[0];
-      const todayTrades = tradesData.filter(t => t.date === today && t.status === 'closed');
-
-      const intradayPnL = [];
-      let cumulativePnL = 0;
-      todayTrades.forEach((trade, index) => {
-        cumulativePnL += trade.pnl || 0;
-        intradayPnL.push({
-          time: trade.entry_time || `${index + 1}`,
-          pnl: cumulativePnL,
-          trade: index + 1
-        });
-      });
-
-      // Calculate monthly performance from actual trades
-      const monthlyPerformance = calculateMonthlyPerformance(tradesData);
-
-      // Calculate daily performance for current month heatmap
-      const heatmapData = calculateMonthlyHeatmapData(tradesData);
-
-      setDashboardData(prev => ({
-        ...prev,
-        chartData: {
-          intradayPnL,
-          monthlyPerformance,
-          heatmapData
-        }
-      }));
-    } catch (error) {
-      console.error('Error loading chart data:', error);
-    }
-  };
-
-  const calculateMonthlyPerformance = (trades) => {
-    const monthlyData = {};
-    const closedTrades = trades.filter(t => t.status === 'closed');
-
-    closedTrades.forEach(trade => {
-      const date = new Date(trade.date);
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      
-      if (!monthlyData[monthKey]) {
-        monthlyData[monthKey] = {
-          pnl: 0,
-          trades: 0,
-          wins: 0
-        };
-      }
-      
-      monthlyData[monthKey].pnl += trade.pnl || 0;
-      monthlyData[monthKey].trades += 1;
-      if (trade.pnl > 0) monthlyData[monthKey].wins += 1;
-    });
-
-    return Object.entries(monthlyData)
-      .map(([month, data]) => ({
-        month: new Date(month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-        pnl: data.pnl,
-        winRate: data.trades > 0 ? (data.wins / data.trades) * 100 : 0,
-        trades: data.trades
-      }))
-      .slice(-12) // Last 12 months
-      .reverse();
-  };
-
-  const calculateMonthlyHeatmapData = (trades, targetMonth = new Date()) => {
-    const year = targetMonth.getFullYear();
-    const month = targetMonth.getMonth();
-    
-    // Get last day of target month
-    const lastDay = new Date(year, month + 1, 0);
-    
-    const dailyData = {};
-    
-    // Initialize all days of the month with 0
-    for (let day = 1; day <= lastDay.getDate(); day++) {
-      const dateStr = new Date(year, month, day).toISOString().split('T')[0];
-      dailyData[dateStr] = { pnl: 0, trades: 0 };
-    }
-    
-    // Fill with actual trade data
-    const closedTrades = trades.filter(t => t.status === 'closed');
-    closedTrades.forEach(trade => {
-      const tradeDate = new Date(trade.date);
-      if (tradeDate.getFullYear() === year && tradeDate.getMonth() === month) {
-        const dateStr = trade.date;
-        if (dailyData[dateStr]) {
-          dailyData[dateStr].pnl += trade.pnl || 0;
-          dailyData[dateStr].trades += 1;
-        }
-      }
-    });
-
-    return Object.entries(dailyData).map(([date, data]) => ({
-      date,
-      count: data.trades, // Actual trade count
-      value: data.pnl
-    }));
-  };
-
-  const loadInsights = async () => {
-    try {
-      // Get recent behavioral insights
-      const { data: insights } = await supabase
-        .from('behavioral_insights')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('is_dismissed', false)
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      // Generate basic insights if none exist
-      const basicInsights = generateBasicInsights();
-      
-      setDashboardData(prev => ({
-        ...prev,
-        insights: insights?.length > 0 ? insights : basicInsights
-      }));
-    } catch (error) {
-      console.error('Error loading insights:', error);
-    }
-  };
-
-  const generateBasicInsights = () => {
+  // Generate insights based on current statistics
+  const generateInsights = () => {
     const insights = [];
-    const { overview, worthScore } = dashboardData;
-
-    if (worthScore.overall > 80) {
+    
+    if (statistics.worthScore > 80) {
       insights.push({
         title: 'Excellent Trading Performance',
         description: 'Your Worth Score indicates strong trading discipline and risk management.',
         severity: 'info',
         insight_type: 'achievement'
       });
-    } else if (worthScore.overall < 50) {
+    } else if (statistics.worthScore < 50) {
       insights.push({
         title: 'Focus on Risk Management',
         description: 'Consider reviewing your position sizing and risk-reward ratios.',
@@ -358,10 +51,19 @@ const Dashboard = ({ supabase, user }) => {
       });
     }
 
-    if (overview.winRate > 60) {
+    if (statistics.winRate > 60) {
       insights.push({
         title: 'Strong Win Rate',
-        description: `Your ${overview.winRate.toFixed(1)}% win rate is above average.`,
+        description: `Your ${statistics.winRate.toFixed(1)}% win rate is above average.`,
+        severity: 'info',
+        insight_type: 'achievement'
+      });
+    }
+
+    if (statistics.totalTrades > 100) {
+      insights.push({
+        title: 'Experienced Trader',
+        description: `With ${statistics.totalTrades} trades, you have solid trading experience.`,
         severity: 'info',
         insight_type: 'achievement'
       });
@@ -370,118 +72,299 @@ const Dashboard = ({ supabase, user }) => {
     return insights;
   };
 
-  const StatCard = ({ title, value, change, changeLabel, icon: Icon, color = 'blue' }) => (
-    <div className="bg-white p-6 rounded-lg shadow-md">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium text-gray-600">{title}</p>
-          <p className={`text-2xl font-bold text-${color}-600`}>{value}</p>
-          {change !== undefined && (
-            <p className={`text-sm ${change >= 0 ? 'text-green-600' : 'text-red-600'} flex items-center`}>
-              {change >= 0 ? <TrendingUp className="w-4 h-4 mr-1" /> : <TrendingDown className="w-4 h-4 mr-1" />}
-              {changeLabel}
-            </p>
-          )}
-        </div>
-        <div className={`p-3 bg-${color}-100 rounded-full`}>
-          <Icon className={`w-6 h-6 text-${color}-600`} />
+  // Calculate current month P&L from statistics
+  const getCurrentMonthPnL = () => {
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    
+    const monthlyData = chartData.monthlyPerformance || [];
+    const currentMonthData = monthlyData.find(month => {
+      const monthDate = new Date(month.month + '-01');
+      return monthDate.getMonth() === currentMonth && monthDate.getFullYear() === currentYear;
+    });
+    
+    return currentMonthData?.pnl || 0;
+  };
+
+  // Worth Score components for radar chart display
+  const getWorthScoreRadarData = () => {
+    return {
+      overall: statistics.worthScore || 0,
+      winRate: Math.min(100, (statistics.winRate || 0) * 1.6), // Scale to 100
+      timing: Math.min(100, (statistics.consistency || 0)), // Use consistency as timing proxy
+      discipline: Math.min(100, (statistics.discipline || 0)),
+      riskManagement: Math.min(100, (statistics.riskManagement || 0)),
+      consistency: Math.min(100, (statistics.consistency || 0))
+    };
+  };
+
+  // Get today's intraday P&L from chart data
+  const getTodaysIntradayPnL = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const todayTrades = dataManager.trades.filter(t => 
+      t.date === today && t.status === 'closed'
+    );
+
+    const intradayPnL = [];
+    let cumulativePnL = 0;
+    todayTrades.forEach((trade, index) => {
+      cumulativePnL += trade.pnl || 0;
+      intradayPnL.push({
+        time: trade.entry_time || `${index + 1}`,
+        pnl: cumulativePnL,
+        trade: index + 1
+      });
+    });
+
+    return intradayPnL;
+  };
+
+  // Use monthly performance from chart data
+  const getMonthlyPerformanceData = () => {
+    return chartData.monthlyPerformance || [];
+  };
+
+  // Get monthly heatmap data for a specific month
+  const getMonthlyHeatmapData = (targetMonth = new Date()) => {
+    const calendarData = dataManager.getCalendarData(targetMonth.getFullYear(), targetMonth.getMonth());
+    
+    // Convert object to array format expected by the component
+    const year = targetMonth.getFullYear();
+    const month = targetMonth.getMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const result = [];
+    
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = new Date(year, month, day).toISOString().split('T')[0];
+      const dayData = calendarData[day] || { tradeCount: 0, totalPnL: 0 };
+      
+      result.push({
+        date: dateStr,
+        count: dayData.tradeCount,
+        value: dayData.totalPnL
+      });
+    }
+    
+    return result;
+  };
+
+  // Get insights based on current statistics
+  const getInsights = () => {
+    return generateInsights();
+  };
+
+  // Current data from dataManager for display
+  const currentMonthPnL = getCurrentMonthPnL();
+  const worthScoreData = getWorthScoreRadarData();
+  const todaysIntradayPnL = getTodaysIntradayPnL();
+  const monthlyPerformanceData = getMonthlyPerformanceData();
+  const insights = getInsights();
+
+  const StatCard = ({ title, value, change, changeLabel, icon: Icon, gradient = 'from-blue-500 to-purple-600' }) => (
+    <div className="relative bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl rounded-xl shadow-xl border border-white/20 dark:border-slate-700/30 overflow-hidden group hover:scale-[1.02] transition-all duration-300">
+      <div className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-5 group-hover:opacity-10 transition-opacity`}></div>
+      <div className="relative p-6">
+        <div className="flex items-center justify-between">
+          <div className="flex-1">
+            <p className="text-sm font-medium text-slate-600 dark:text-slate-400 mb-1">{title}</p>
+            <p className="text-2xl font-bold text-slate-900 dark:text-white mb-2">{value}</p>
+            {change !== undefined && (
+              <div className={`flex items-center text-sm ${change >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                {change >= 0 ? <TrendingUp className="w-4 h-4 mr-1" /> : <TrendingDown className="w-4 h-4 mr-1" />}
+                <span>{changeLabel}</span>
+              </div>
+            )}
+          </div>
+          <div className={`w-12 h-12 bg-gradient-to-br ${gradient} rounded-xl flex items-center justify-center shadow-lg`}>
+            <Icon className="w-6 h-6 text-white" />
+          </div>
         </div>
       </div>
     </div>
   );
 
-  const WorthScoreRadar = ({ data }) => {
-    const radarData = [
-      { subject: 'Win Rate', value: data.winRate, fullMark: 250 },
-      { subject: 'Timing', value: data.timing, fullMark: 250 },
-      { subject: 'Discipline', value: data.discipline, fullMark: 250 },
-      { subject: 'Risk Mgmt', value: data.riskManagement, fullMark: 250 },
-      { subject: 'Consistency', value: data.consistency, fullMark: 250 }
+  // Glassmorphic Performance Overview Card (replaces old radar)
+  const PerformanceOverview = ({ stats }) => {
+    const performanceMetrics = [
+      { 
+        label: 'Win Rate', 
+        value: `${(stats.winRate || 0).toFixed(1)}%`, 
+        trend: stats.winRate >= 60 ? 'positive' : stats.winRate >= 40 ? 'neutral' : 'negative',
+        icon: Target
+      },
+      { 
+        label: 'Profit Factor', 
+        value: (stats.profitFactor || 0).toFixed(2), 
+        trend: stats.profitFactor >= 1.5 ? 'positive' : stats.profitFactor >= 1 ? 'neutral' : 'negative',
+        icon: TrendingUp
+      },
+      { 
+        label: 'Total P&L', 
+        value: `$${(stats.totalPnL || 0).toLocaleString()}`, 
+        trend: stats.totalPnL >= 0 ? 'positive' : 'negative',
+        icon: DollarSign
+      },
+      { 
+        label: 'Max Drawdown', 
+        value: `${Math.abs(stats.maxDrawdown || 0).toFixed(1)}%`, 
+        trend: Math.abs(stats.maxDrawdown || 0) <= 5 ? 'positive' : Math.abs(stats.maxDrawdown || 0) <= 15 ? 'neutral' : 'negative',
+        icon: AlertCircle
+      }
     ];
 
     return (
-      <div className="bg-white p-6 rounded-lg shadow-md">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900">Worth Score</h3>
-          <div className="text-right">
-            <div className="text-3xl font-bold text-purple-600">{data.overall}</div>
-            <div className="text-sm text-gray-600">Overall Score</div>
+      <div className="relative bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 dark:border-slate-700/30 overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-purple-500/5 to-cyan-500/10"></div>
+        <div className="relative p-6">
+          <div className="flex items-center space-x-3 mb-6">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
+              <Activity className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Performance Overview</h3>
+              <p className="text-sm text-slate-600 dark:text-slate-400">Key trading metrics</p>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-4">
+            {performanceMetrics.map((metric, index) => {
+              const Icon = metric.icon;
+              const trendColors = {
+                positive: 'from-green-500 to-emerald-500',
+                neutral: 'from-yellow-500 to-orange-500',
+                negative: 'from-red-500 to-pink-500'
+              };
+              
+              return (
+                <div key={index} className="relative bg-white/40 dark:bg-slate-900/40 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+                  <div className="flex items-center justify-between mb-2">
+                    <Icon className="w-5 h-5 text-slate-600 dark:text-slate-400" />
+                    <div className={`w-2 h-2 rounded-full bg-gradient-to-r ${trendColors[metric.trend]}`}></div>
+                  </div>
+                  <div className="text-2xl font-bold text-slate-900 dark:text-white mb-1">{metric.value}</div>
+                  <div className="text-sm text-slate-600 dark:text-slate-400">{metric.label}</div>
+                </div>
+              );
+            })}
           </div>
         </div>
-        <ResponsiveContainer width="100%" height={300}>
-          <RadarChart data={radarData}>
-            <PolarGrid />
-            <PolarAngleAxis dataKey="subject" />
-            <PolarRadiusAxis angle={90} domain={[0, 100]} />
-            <Radar
-              name="Worth Score"
-              dataKey="value"
-              stroke="#8b5cf6"
-              fill="#8b5cf6"
-              fillOpacity={0.3}
-              strokeWidth={2}
-            />
-          </RadarChart>
-        </ResponsiveContainer>
       </div>
     );
   };
 
   const IntradayPnLChart = ({ data }) => (
-    <div className="bg-white p-6 rounded-lg shadow-md">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">Today's Cumulative P&L</h3>
-      <ResponsiveContainer width="100%" height={250}>
-        <AreaChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="time" />
-          <YAxis />
-          <Tooltip 
-            formatter={(value) => [`$${value.toFixed(2)}`, 'Cumulative P&L']}
-            labelFormatter={(label) => `Trade: ${label}`}
-          />
-          <Area
-            type="monotone"
-            dataKey="pnl"
-            stroke="#10b981"
-            fill="#10b981"
-            fillOpacity={0.3}
-          />
-        </AreaChart>
-      </ResponsiveContainer>
+    <div className="relative bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 dark:border-slate-700/30 overflow-hidden">
+      <div className="absolute inset-0 bg-gradient-to-br from-green-500/10 via-blue-500/5 to-purple-500/10"></div>
+      <div className="relative p-6">
+        <div className="flex items-center space-x-3 mb-6">
+          <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg">
+            <TrendingUp className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white">Today's Cumulative P&L</h3>
+            <p className="text-sm text-slate-600 dark:text-slate-400">Intraday performance tracking</p>
+          </div>
+        </div>
+        <ResponsiveContainer width="100%" height={280}>
+          <AreaChart data={data}>
+            <defs>
+              <linearGradient id="pnlGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#10B981" stopOpacity={0.8}/>
+                <stop offset="100%" stopColor="#10B981" stopOpacity={0.1}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.2)" />
+            <XAxis dataKey="time" tick={{ fill: 'rgb(71, 85, 105)', fontSize: 11 }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fill: 'rgb(71, 85, 105)', fontSize: 11 }} axisLine={false} tickLine={false} />
+            <Tooltip 
+              formatter={(value) => [`$${value.toFixed(2)}`, 'Cumulative P&L']}
+              labelFormatter={(label) => `Trade: ${label}`}
+              contentStyle={{ 
+                backgroundColor: 'rgba(255, 255, 255, 0.95)', 
+                border: 'none', 
+                borderRadius: '12px', 
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                backdropFilter: 'blur(16px)'
+              }}
+            />
+            <Area
+              type="monotone"
+              dataKey="pnl"
+              stroke="#10B981"
+              strokeWidth={3}
+              fill="url(#pnlGradient)"
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 
   const MonthlyPerformanceChart = ({ data }) => (
-    <div className="bg-white p-6 rounded-lg shadow-md">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">Monthly Performance</h3>
-      <ResponsiveContainer width="100%" height={300}>
-        <BarChart data={data} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="month" />
-          <YAxis domain={['dataMin', 'dataMax']} />
-          <Tooltip 
-            formatter={(value, name) => [
-              name === 'pnl' ? `$${value.toFixed(2)}` : `${value.toFixed(1)}%`,
-              name === 'pnl' ? 'Monthly P&L' : 'Win Rate'
-            ]}
-          />
-          <Bar dataKey="pnl" fill="#3b82f6" />
-        </BarChart>
-      </ResponsiveContainer>
+    <div className="relative bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 dark:border-slate-700/30 overflow-hidden">
+      <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 via-blue-500/5 to-cyan-500/10"></div>
+      <div className="relative p-6">
+        <div className="flex items-center space-x-3 mb-6">
+          <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-cyan-600 rounded-xl flex items-center justify-center shadow-lg">
+            <Activity className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white">Monthly Performance</h3>
+            <p className="text-sm text-slate-600 dark:text-slate-400">Monthly P&L breakdown</p>
+          </div>
+        </div>
+        <ResponsiveContainer width="100%" height={320}>
+          <BarChart data={data} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+            <defs>
+              <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#8B5CF6" stopOpacity={0.9}/>
+                <stop offset="100%" stopColor="#06B6D4" stopOpacity={0.7}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.2)" />
+            <XAxis dataKey="month" tick={{ fill: 'rgb(71, 85, 105)', fontSize: 11 }} axisLine={false} tickLine={false} />
+            <YAxis 
+              domain={['dataMin', 'dataMax']} 
+              tick={{ fill: 'rgb(71, 85, 105)', fontSize: 11 }} 
+              axisLine={false} 
+              tickLine={false}
+              tickFormatter={(value) => {
+                // Format Y-axis to show whole numbers or reasonable decimals
+                if (Math.abs(value) >= 1000) {
+                  return `$${(value / 1000).toFixed(1)}k`;
+                } else if (Math.abs(value) >= 100) {
+                  return `$${Math.round(value)}`;
+                } else if (Math.abs(value) >= 10) {
+                  return `$${value.toFixed(1)}`;
+                } else {
+                  return `$${value.toFixed(2)}`;
+                }
+              }}
+            />
+            <Tooltip 
+              formatter={(value, name) => [
+                name === 'pnl' ? `$${value.toFixed(2)}` : `${value.toFixed(1)}%`,
+                name === 'pnl' ? 'Monthly P&L' : 'Win Rate'
+              ]}
+              contentStyle={{ 
+                backgroundColor: 'rgba(255, 255, 255, 0.95)', 
+                border: 'none', 
+                borderRadius: '12px', 
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                backdropFilter: 'blur(16px)'
+              }}
+            />
+            <Bar dataKey="pnl" fill="url(#barGradient)" radius={[6, 6, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 
   const TradingHeatmap = () => {
     const [heatmapMonth, setHeatmapMonth] = useState(new Date());
-    const [monthlyHeatmapData, setMonthlyHeatmapData] = useState([]);
-    
-    // Recalculate heatmap data when month changes
-    useEffect(() => {
-      if (allTrades.length > 0) {
-        const newHeatmapData = calculateMonthlyHeatmapData(allTrades, heatmapMonth);
-        setMonthlyHeatmapData(newHeatmapData);
-      }
-    }, [heatmapMonth, allTrades]);
+    const monthlyHeatmapData = getMonthlyHeatmapData(heatmapMonth);
     
     // Generate month options (last 12 months)
     const getMonthOptions = () => {
@@ -555,21 +438,31 @@ const Dashboard = ({ supabase, user }) => {
     };
 
     return (
-      <div className="bg-white p-6 rounded-lg shadow-md">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold text-gray-900">Monthly Trading Heatmap</h3>
-          <select
-            value={heatmapMonth.toISOString().substring(0, 7)}
-            onChange={(e) => setHeatmapMonth(new Date(e.target.value + '-01'))}
-            className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {getMonthOptions().map(option => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
+      <div className="relative bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 dark:border-slate-700/30 overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-orange-500/10 via-pink-500/5 to-purple-500/10"></div>
+        <div className="relative p-6">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-pink-600 rounded-xl flex items-center justify-center shadow-lg">
+                <Calendar className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Trading Heatmap</h3>
+                <p className="text-sm text-slate-600 dark:text-slate-400">Monthly activity overview</p>
+              </div>
+            </div>
+            <Select
+              value={heatmapMonth.toISOString().substring(0, 7)}
+              onValueChange={(value) => setHeatmapMonth(new Date(value + '-01'))}
+              className="w-48"
+            >
+              {getMonthOptions().map(option => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </div>
         
         {/* Calendar Header */}
         <div className="grid grid-cols-7 gap-1 mb-2">
@@ -618,6 +511,7 @@ const Dashboard = ({ supabase, user }) => {
             <span>Breakeven</span>
           </div>
         </div>
+        </div>
       </div>
     );
   };
@@ -631,24 +525,27 @@ const Dashboard = ({ supabase, user }) => {
       }
     };
 
-    const getColor = (severity) => {
+    const getBadgeVariant = (severity) => {
       switch (severity) {
-        case 'warning': return 'orange';
-        case 'critical': return 'red';
-        default: return 'blue';
+        case 'warning': return 'outline';
+        case 'critical': return 'destructive';
+        default: return 'secondary';
       }
     };
 
     const Icon = getIcon(insight.insight_type);
-    const color = getColor(insight.severity);
+    const variant = getBadgeVariant(insight.severity);
 
     return (
-      <div className={`p-4 border-l-4 border-${color}-500 bg-${color}-50`}>
-        <div className="flex items-start">
-          <Icon className={`w-5 h-5 text-${color}-600 mt-0.5 mr-3`} />
-          <div>
-            <h4 className={`font-medium text-${color}-800`}>{insight.title}</h4>
-            <p className={`text-sm text-${color}-700 mt-1`}>{insight.description}</p>
+      <div className="p-4 border-l-4 border-primary/20 bg-muted/50 rounded-md">
+        <div className="flex items-start space-x-3">
+          <Icon className="w-5 h-5 text-primary mt-0.5" />
+          <div className="flex-1">
+            <div className="flex items-center space-x-2 mb-1">
+              <h4 className="font-medium text-foreground">{insight.title}</h4>
+              <Badge variant={variant}>{insight.severity}</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground">{insight.description}</p>
           </div>
         </div>
       </div>
@@ -658,85 +555,96 @@ const Dashboard = ({ supabase, user }) => {
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900">Trading Dashboard</h1>
-        <select
-          value={selectedTimeframe}
-          onChange={(e) => setSelectedTimeframe(e.target.value)}
-          className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="7d">Last 7 days</option>
-          <option value="30d">Last 30 days</option>
-          <option value="90d">Last 90 days</option>
-          <option value="1y">Last year</option>
-        </select>
-      </div>
-
-      {/* Overview Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
-        <StatCard
-          title="Account Balance"
-          value={`$${dashboardData.overview.accountBalance.toLocaleString()}`}
-          icon={DollarSign}
-          color="green"
-        />
-        <StatCard
-          title="Total P&L"
-          value={`$${dashboardData.overview.totalPnL.toLocaleString()}`}
-          change={dashboardData.overview.monthlyPnL}
-          changeLabel={`$${Math.abs(dashboardData.overview.monthlyPnL).toLocaleString()} this month`}
-          icon={TrendingUp}
-          color={dashboardData.overview.totalPnL >= 0 ? 'green' : 'red'}
-        />
-        <StatCard
-          title="Win Rate"
-          value={`${dashboardData.overview.winRate.toFixed(1)}%`}
-          icon={Target}
-          color="blue"
-        />
-        <StatCard
-          title="Total Trades"
-          value={dashboardData.overview.totalTrades.toLocaleString()}
-          icon={Activity}
-          color="purple"
-        />
-        <StatCard
-          title="Worth Score"
-          value={dashboardData.worthScore.overall}
-          icon={Award}
-          color="indigo"
-        />
-      </div>
-
-      {/* Charts Row 1 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <WorthScoreRadar data={dashboardData.worthScore} />
-        <IntradayPnLChart data={dashboardData.chartData.intradayPnL} />
-      </div>
-
-      {/* Charts Row 2 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <MonthlyPerformanceChart data={dashboardData.chartData.monthlyPerformance} />
-        <TradingHeatmap />
-      </div>
-
-      {/* Insights */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Trading Insights</h3>
-        <div className="space-y-4">
-          {dashboardData.insights.map((insight, index) => (
-            <InsightCard key={index} insight={insight} />
-          ))}
+    <div className="space-y-8">
+        {/* Header */}
+        <div className="flex justify-between items-center">
+          <h1 className="text-3xl font-bold text-foreground">Trading Dashboard</h1>
+          <Select
+            value={selectedTimeframe}
+            onValueChange={setSelectedTimeframe}
+            className="w-40"
+          >
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+            <option value="1y">Last year</option>
+          </Select>
         </div>
-      </div>
+
+        {/* Overview Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+          <StatCard
+            title="Account Balance"
+            value={`$${accountBalance.toLocaleString()}`}
+            icon={DollarSign}
+            gradient="from-green-500 to-emerald-600"
+          />
+          <StatCard
+            title="Total P&L"
+            value={`$${(statistics.totalPnL || 0).toLocaleString()}`}
+            change={currentMonthPnL}
+            changeLabel={`$${Math.abs(currentMonthPnL).toLocaleString()} this month`}
+            icon={TrendingUp}
+            gradient={(statistics.totalPnL || 0) >= 0 ? "from-green-500 to-blue-600" : "from-red-500 to-pink-600"}
+          />
+          <StatCard
+            title="Win Rate"
+            value={`${(statistics.winRate || 0).toFixed(1)}%`}
+            icon={Target}
+            gradient="from-blue-500 to-cyan-600"
+          />
+          <StatCard
+            title="Total Trades"
+            value={(statistics.totalTrades || 0).toLocaleString()}
+            icon={Activity}
+            gradient="from-purple-500 to-indigo-600"
+          />
+          <StatCard
+            title="Worth Score"
+            value={statistics.worthScore || 0}
+            icon={Award}
+            gradient="from-orange-500 to-red-600"
+          />
+        </div>
+
+        {/* Charts Row 1 */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <PerformanceOverview stats={statistics} />
+          <IntradayPnLChart data={todaysIntradayPnL} />
+        </div>
+
+        {/* Charts Row 2 */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <MonthlyPerformanceChart data={monthlyPerformanceData} />
+          <TradingHeatmap />
+        </div>
+
+        {/* Insights */}
+        <div className="relative bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 dark:border-slate-700/30 overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-pink-500/10"></div>
+          <div className="relative p-6">
+            <div className="flex items-center space-x-3 mb-6">
+              <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
+                <Brain className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Trading Insights</h3>
+                <p className="text-sm text-slate-600 dark:text-slate-400">AI-powered recommendations</p>
+              </div>
+            </div>
+            <div className="space-y-4">
+              {insights.map((insight, index) => (
+                <InsightCard key={index} insight={insight} />
+              ))}
+            </div>
+          </div>
+        </div>
     </div>
   );
 };

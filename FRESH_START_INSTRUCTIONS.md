@@ -43,7 +43,7 @@ SELECT 'Old schema deleted successfully!' as status;
 ## Step 2: Apply Fresh Complete Schema
 
 1. **In the same SQL Editor**
-2. **Copy and paste the entire contents of `FRESH_COMPLETE_SCHEMA.sql`**
+2. **Copy and paste the entire contents of `DATABASE_SCHEMA.sql`**
 3. **Click "Run" to create everything fresh**
 
 ## Step 3: Set Up Storage (Profile Pictures)

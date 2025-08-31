@@ -59,6 +59,10 @@ export default function Pagination({
             <option value={20}>20</option>
             <option value={50}>50</option>
             <option value={100}>100</option>
+            <option value={500}>500</option>
+            <option value={1000}>1000</option>
+            <option value={5000}>5000</option>
+            <option value={-1}>Show All</option>
           </select>
           <span className="text-sm text-gray-600">per page</span>
         </div>

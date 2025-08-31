@@ -1,11 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  User, Camera, Save, Edit, Upload, X, Check, 
+  User, Camera, Save, Edit, X,
   DollarSign, Target, TrendingUp, Settings, Lock,
   Globe, Clock, Shield, Award, Mail
 } from 'lucide-react';
+import { useDataManager, fetchProfileMetrics, formatMetricValue, calculateEnhancedWorthScore, getEnhancedPerformanceGrade } from '../utils';
+import { Card, CardHeader, CardTitle, CardContent, Button, Input, Label, Badge, Select } from './ui/components';
 
-const Profile = ({ supabase, user, trades = [], stats = {}, onProfileUpdate }) => {
+const Profile = ({ supabase, user, accountBalance, onProfileUpdate }) => {
+  const dataManager = useDataManager();
+  const statistics = dataManager.getStatistics();
+  
+  // Get dynamic account balance from centralized data manager
+  const dynamicBalance = dataManager.getDynamicAccountBalance();
+  const currentBalance = accountBalance || dynamicBalance;
+  const portfolioMetrics = dataManager.getPortfolioMetrics(currentBalance);
   const [profile, setProfile] = useState({
     username: '',
     full_name: '',
@@ -21,6 +30,8 @@ const Profile = ({ supabase, user, trades = [], stats = {}, onProfileUpdate }) =
     winning_trades: 0,
     total_pnl: 0
   });
+  
+  const [profileMetrics, setProfileMetrics] = useState(null);
 
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -40,8 +51,33 @@ const Profile = ({ supabase, user, trades = [], stats = {}, onProfileUpdate }) =
   useEffect(() => {
     if (user) {
       loadProfile();
+      loadProfileMetrics();
     }
   }, [user]);
+
+  // Subscribe to dataManager changes for reactive updates
+  useEffect(() => {
+    const unsubscribe = dataManager.subscribe(() => {
+      // Update profile metrics when trades change
+      loadProfileMetrics();
+    });
+    
+    return unsubscribe;
+  }, [dataManager]);
+
+  const loadProfileMetrics = async () => {
+    try {
+      const result = await fetchProfileMetrics(user.id);
+      
+      if (result.success) {
+        setProfileMetrics(result.metrics);
+      } else {
+        console.error('Failed to load profile metrics:', result.error);
+      }
+    } catch (error) {
+      console.error('Error loading profile metrics:', error);
+    }
+  };
 
   const loadProfile = async () => {
     try {
@@ -147,7 +183,7 @@ const Profile = ({ supabase, user, trades = [], stats = {}, onProfileUpdate }) =
     try {
       // Create a unique filename
       const fileExt = file.name.split('.').pop();
-      const fileName = `${user.id}/profile-${Date.now()}.${fileExt}`;
+      const fileName = `${user.id}/profile-${crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36)}.${fileExt}`;
 
       // Check if bucket exists first
       const { data: buckets } = await supabase.storage.listBuckets();
@@ -294,18 +330,26 @@ const Profile = ({ supabase, user, trades = [], stats = {}, onProfileUpdate }) =
     );
   };
 
+  // Unified glassmorphic design system
+  const GlassCard = ({ children, className = "", hover = true }) => (
+    <div className={`relative bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 dark:border-slate-700/30 overflow-hidden ${hover ? 'group hover:scale-[1.02] transition-all duration-300' : ''} ${className}`}>
+      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 via-purple-500/3 to-cyan-500/5"></div>
+      <div className="relative">{children}</div>
+    </div>
+  );
+
   const StatCard = ({ icon: Icon, label, value, color = 'blue' }) => (
-    <div className="bg-white p-6 rounded-lg shadow-md">
+    <GlassCard className="p-6">
       <div className="flex items-center">
-        <div className={`p-3 bg-${color}-100 rounded-full mr-4`}>
+        <div className={`p-3 bg-gradient-to-br from-${color}-500/20 to-${color}-600/20 backdrop-blur-sm rounded-xl mr-4`}>
           <Icon className={`w-6 h-6 text-${color}-600`} />
         </div>
         <div>
-          <p className="text-sm font-medium text-gray-600">{label}</p>
+          <p className="text-sm font-medium text-gray-600 dark:text-gray-400">{label}</p>
           <p className={`text-xl font-bold text-${color}-600`}>{value}</p>
         </div>
       </div>
-    </div>
+    </GlassCard>
   );
 
   if (loading) {
@@ -317,47 +361,52 @@ const Profile = ({ supabase, user, trades = [], stats = {}, onProfileUpdate }) =
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900">Profile Settings</h1>
-        <div className="flex space-x-3">
-          {isEditing ? (
-            <>
-              <button
-                onClick={() => setIsEditing(false)}
-                className="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
-                <X className="w-4 h-4 mr-2 inline" />
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveProfile}
-                disabled={saving}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center"
-              >
-                {saving ? (
-                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2" />
-                ) : (
-                  <Save className="w-4 h-4 mr-2" />
-                )}
-                Save Changes
-              </button>
-            </>
-          ) : (
-            <button
+    <div className="max-w-4xl mx-auto space-y-8">
+        {/* Header */}
+        <div className="flex justify-between items-center">
+          <h1 className="text-3xl font-bold text-foreground">Profile Settings</h1>
+          <div className="flex space-x-3">
+            {isEditing ? (
+              <>
+                <Button
+                  onClick={() => setIsEditing(false)}
+                  variant="outline"
+                  size="default"
+                >
+                  <X className="w-4 h-4 mr-2" />
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleSaveProfile}
+                  disabled={saving}
+                  variant="default"
+                  size="default"
+                >
+                  {saving ? (
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2" />
+                  ) : (
+                    <Save className="w-4 h-4 mr-2" />
+                  )}
+                  Save Changes
+                </Button>
+              </>
+            ) : (
+            <Button
               onClick={() => setIsEditing(true)}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center"
+              variant="default"
+              size="default"
             >
               <Edit className="w-4 h-4 mr-2" />
               Edit Profile
-            </button>
+            </Button>
           )}
         </div>
       </div>
 
       {/* Profile Header */}
-      <div className="bg-white rounded-lg shadow-md p-8">
+      <GlassCard>
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-purple-500/5 to-cyan-500/10"></div>
+        <div className="relative p-8">
         <div className="flex flex-col md:flex-row items-center md:items-start space-y-6 md:space-y-0 md:space-x-8">
           <ProfileImage />
           
@@ -370,7 +419,7 @@ const Profile = ({ supabase, user, trades = [], stats = {}, onProfileUpdate }) =
                     type="text"
                     value={profile.full_name}
                     onChange={(e) => setProfile(prev => ({ ...prev, full_name: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border border-slate-200/30 dark:border-slate-700/30 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200 shadow-lg shadow-slate-200/10 dark:shadow-slate-900/10"
                     placeholder="Enter your full name"
                   />
                 </div>
@@ -380,7 +429,7 @@ const Profile = ({ supabase, user, trades = [], stats = {}, onProfileUpdate }) =
                     type="text"
                     value={profile.username}
                     onChange={(e) => setProfile(prev => ({ ...prev, username: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border border-slate-200/30 dark:border-slate-700/30 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200 shadow-lg shadow-slate-200/10 dark:shadow-slate-900/10"
                     placeholder="Enter a username"
                   />
                 </div>
@@ -397,47 +446,70 @@ const Profile = ({ supabase, user, trades = [], stats = {}, onProfileUpdate }) =
             )}
           </div>
 
-          {/* Worth Score Display */}
+          {/* Enhanced Worth Score Display */}
           <div className="text-center">
-            <div className="bg-gradient-to-r from-purple-500 to-indigo-600 text-white p-6 rounded-lg">
-              <Award className="w-8 h-8 mx-auto mb-2" />
-              <div className="text-3xl font-bold">{stats.worthScore || 0}</div>
-              <div className="text-sm opacity-90">Worth Score</div>
-            </div>
+            {(() => {
+              // Use profileMetrics if available, otherwise calculate from current data
+              const baseScore = profileMetrics?.worth_score || statistics.worthScore || 0;
+              
+              return (
+                <div className="bg-gradient-to-r from-purple-500/90 to-indigo-600/90 backdrop-blur-sm border border-purple-300/50 text-white p-6 rounded-xl shadow-xl">
+                  <Award className="w-8 h-8 mx-auto mb-2" />
+                  <div className="text-3xl font-bold">{baseScore.toFixed(1)}</div>
+                  <div className="text-sm opacity-90">Worth Score</div>
+                <div className="text-xs opacity-75 mt-1">
+                  {(() => {
+                    const grade = baseScore >= 80 ? { grade: 'A+', description: 'Excellent' } :
+                                     baseScore >= 70 ? { grade: 'A', description: 'Very Good' } :
+                                     baseScore >= 60 ? { grade: 'B', description: 'Good' } :
+                                     baseScore >= 50 ? { grade: 'C', description: 'Average' } :
+                                   { grade: 'D', description: 'Needs Improvement' };
+                    return `${grade.grade} • ${grade.description}`;
+                  })()}
+                  </div>
+                  <div className="text-xs opacity-60 mt-2">
+                    Based on {statistics.totalTrades || 0} trades
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
-      </div>
+        </div>
+      </GlassCard>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <StatCard
           icon={TrendingUp}
           label="Total Trades"
-          value={profile.total_trades || 0}
+          value={profileMetrics?.total_trades || statistics.totalTrades || 0}
           color="blue"
         />
         <StatCard
           icon={Target}
           label="Win Rate"
-          value={profile.total_trades > 0 ? `${((profile.winning_trades / profile.total_trades) * 100).toFixed(1)}%` : '0%'}
+          value={`${(profileMetrics?.win_rate || statistics.winRate || 0).toFixed(1)}%`}
           color="green"
         />
         <StatCard
           icon={DollarSign}
           label="Total P&L"
-          value={`$${(profile.total_pnl || 0).toLocaleString()}`}
-          color={profile.total_pnl >= 0 ? "green" : "red"}
+          value={formatMetricValue(profileMetrics?.total_pnl || statistics.totalPnL || 0, 'currency')}
+          color={(profileMetrics?.total_pnl || statistics.totalPnL || 0) >= 0 ? "green" : "red"}
         />
       </div>
 
       {/* Settings */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-6 flex items-center">
-          <Settings className="w-5 h-5 mr-2" />
-          Trading Settings
-        </h3>
+      <GlassCard>
+        <div className="absolute inset-0 bg-gradient-to-br from-green-500 to-emerald-600 opacity-5 group-hover:opacity-10 transition-opacity"></div>
+        <div className="relative p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-6 flex items-center">
+            <Settings className="w-5 h-5 mr-2" />
+            Trading Settings
+          </h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               <DollarSign className="w-4 h-4 inline mr-1" />
@@ -449,11 +521,11 @@ const Profile = ({ supabase, user, trades = [], stats = {}, onProfileUpdate }) =
                 step="0.01"
                 value={profile.account_balance}
                 onChange={(e) => setProfile(prev => ({ ...prev, account_balance: parseFloat(e.target.value) || 0 }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border border-slate-200/30 dark:border-slate-700/30 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200 shadow-lg shadow-slate-200/10 dark:shadow-slate-900/10"
                 placeholder="0.00"
               />
             ) : (
-              <p className="text-lg font-semibold text-gray-900">${profile.account_balance?.toLocaleString() || '0'}</p>
+              <p className="text-lg font-semibold text-gray-900">${currentBalance?.toLocaleString() || '0'}</p>
             )}
           </div>
 
@@ -466,7 +538,7 @@ const Profile = ({ supabase, user, trades = [], stats = {}, onProfileUpdate }) =
               <select
                 value={profile.currency}
                 onChange={(e) => setProfile(prev => ({ ...prev, currency: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border border-slate-200/30 dark:border-slate-700/30 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200 shadow-lg shadow-slate-200/10 dark:shadow-slate-900/10"
               >
                 {currencies.map(currency => (
                   <option key={currency} value={currency}>{currency}</option>
@@ -486,7 +558,7 @@ const Profile = ({ supabase, user, trades = [], stats = {}, onProfileUpdate }) =
               <select
                 value={profile.timezone}
                 onChange={(e) => setProfile(prev => ({ ...prev, timezone: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border border-slate-200/30 dark:border-slate-700/30 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200 shadow-lg shadow-slate-200/10 dark:shadow-slate-900/10"
               >
                 {timezones.map(timezone => (
                   <option key={timezone} value={timezone}>{timezone}</option>
@@ -506,7 +578,7 @@ const Profile = ({ supabase, user, trades = [], stats = {}, onProfileUpdate }) =
               <select
                 value={profile.trading_experience}
                 onChange={(e) => setProfile(prev => ({ ...prev, trading_experience: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border border-slate-200/30 dark:border-slate-700/30 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200 shadow-lg shadow-slate-200/10 dark:shadow-slate-900/10"
               >
                 {experienceLevels.map(level => (
                   <option key={level} value={level}>{level}</option>
@@ -530,7 +602,7 @@ const Profile = ({ supabase, user, trades = [], stats = {}, onProfileUpdate }) =
                 max="10"
                 value={profile.risk_tolerance}
                 onChange={(e) => setProfile(prev => ({ ...prev, risk_tolerance: parseFloat(e.target.value) || 2.0 }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border border-slate-200/30 dark:border-slate-700/30 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all duration-200 shadow-lg shadow-slate-200/10 dark:shadow-slate-900/10"
                 placeholder="2.0"
               />
             ) : (
@@ -550,24 +622,62 @@ const Profile = ({ supabase, user, trades = [], stats = {}, onProfileUpdate }) =
               </p>
             )}
           </div>
+          </div>
         </div>
-      </div>
+      </GlassCard>
+
+      {/* Application Settings */}
+      <GlassCard>
+        <div className="absolute inset-0 bg-gradient-to-br from-green-500 to-teal-600 opacity-5 group-hover:opacity-10 transition-opacity"></div>
+        <div className="relative p-6">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center">
+            <Settings className="w-5 h-5 mr-2" />
+            Application Settings
+          </h3>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-4 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm rounded-xl border border-white/20 dark:border-slate-700/30">
+              <div>
+                <label className="text-sm font-medium text-gray-900 dark:text-white">Enable Animations</label>
+                <p className="text-xs text-gray-600 dark:text-gray-400">Toggle glassmorphic animations throughout the app</p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  value=""
+                  className="sr-only peer"
+                  defaultChecked={true}
+                  onChange={(e) => {
+                    // Store animation preference in localStorage
+                    localStorage.setItem('animationsEnabled', e.target.checked);
+                    // You can also dispatch this to a global state if needed
+                    window.dispatchEvent(new CustomEvent('animationToggle', { detail: e.target.checked }));
+                  }}
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[\'\'] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+      </GlassCard>
 
       {/* Account Actions */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-          <Lock className="w-5 h-5 mr-2" />
-          Account Actions
-        </h3>
-        <div className="flex flex-wrap gap-4">
-          <button
-            onClick={() => supabase.auth.signOut()}
-            className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-          >
-            Sign Out
-          </button>
+      <GlassCard>
+        <div className="absolute inset-0 bg-gradient-to-br from-red-500 to-orange-600 opacity-5 group-hover:opacity-10 transition-opacity"></div>
+        <div className="relative p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+            <Lock className="w-5 h-5 mr-2" />
+            Account Actions
+          </h3>
+          <div className="flex flex-wrap gap-4">
+            <button
+              onClick={() => supabase.auth.signOut()}
+              className="px-4 py-2 bg-gradient-to-r from-slate-500/80 to-slate-600/80 backdrop-blur-sm border border-slate-300/30 text-white rounded-xl hover:from-slate-600/90 hover:to-slate-700/90 transition-all duration-300 shadow-lg shadow-slate-500/25"
+            >
+              Sign Out
+            </button>
+          </div>
         </div>
-      </div>
+      </GlassCard>
     </div>
   );
 };

@@ -21,13 +21,13 @@ Your trading journal application is now equipped with a complete authentication 
 **If the current Supabase project is not yours, you'll need to:**
 
 1. **Create your own Supabase project** at [supabase.com](https://supabase.com/dashboard)
-2. **Run the database schema** from `supabase-schema-clean.sql`
+2. **Run the database schema** from `DATABASE_SCHEMA.sql`
 3. **Update your `.env` file** with your project credentials
 
 ### 📋 Database Setup
 
 1. **Go to your Supabase Dashboard** → SQL Editor
-2. **Copy the entire content** from `supabase-schema-clean.sql`
+2. **Copy the entire content** from `DATABASE_SCHEMA.sql`
 3. **Paste and execute** the SQL commands
 4. **Verify tables were created** in the Table Editor
 
